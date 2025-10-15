@@ -812,8 +812,7 @@ checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 [[package]]
 name = "sbpf-assembler"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe35fff08463e7e57b675d7cbf4fe103f84195246a0660d120fa81ccc1ed4eb3"
+source = "git+https://github.com/blueshift-gg/sbpf?branch=master#7eb6026388aa4015087d9941bd9660073f417743"
 dependencies = [
  "anyhow",
  "num-derive",
@@ -821,10 +820,20 @@ dependencies = [
  "object",
  "phf",
  "phf_macros",
+ "sbpf-common",
  "serde",
  "serde-wasm-bindgen",
  "thiserror 2.0.17",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "sbpf-common"
+version = "0.1.2"
+source = "git+https://github.com/blueshift-gg/sbpf?branch=master#7eb6026388aa4015087d9941bd9660073f417743"
+dependencies = [
+ "num-derive",
+ "num-traits",
 ]
 
 [[package]]
@@ -839,6 +848,7 @@ dependencies = [
  "llvm-sys 211.0.0",
  "object",
  "sbpf-assembler",
+ "sbpf-common",
  "thiserror 2.0.17",
  "tracing",
  "tracing-appender",

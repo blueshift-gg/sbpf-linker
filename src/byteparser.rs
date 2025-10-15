@@ -2,8 +2,8 @@ use sbpf_assembler::ast::AST;
 use sbpf_assembler::astnode::{ASTNode, ROData};
 use sbpf_assembler::instruction::Instruction;
 use sbpf_assembler::lexer::{ImmediateValue, Token};
-use sbpf_assembler::opcode::Opcode;
 use sbpf_assembler::parser::ParseResult;
+use sbpf_common::opcode::Opcode;
 
 use object::RelocationTarget::Symbol;
 use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _};
