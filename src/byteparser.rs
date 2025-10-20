@@ -66,7 +66,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 let node = &section.data().unwrap()[offset..offset + node_len];
                 let instruction = Instruction::from_bytes(node);
                 if let Err(error) = instruction {
-                    return Err(SbpfLinkerError::InstructionParseError(error.to_string()));
+                    return Err(SbpfLinkerError::InstructionParseError(
+                        error.to_string(),
+                    ));
                 } else {
                     ast.nodes.push(ASTNode::Instruction {
                         instruction: instruction.unwrap(),
@@ -84,8 +86,10 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         Symbol(sym) => Some(obj.symbol_by_index(sym).unwrap()),
                         _ => None,
                     };
-                
-                    if symbol.unwrap().section_index() == Some(ro_section.index()) {
+
+                    if symbol.unwrap().section_index()
+                        == Some(ro_section.index())
+                    {
                         // addend is not explicit in the relocation entry, but implicitly encoded
                         // as the immediate value of the instruction
                         let addend = match ast

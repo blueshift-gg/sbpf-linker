@@ -7,7 +7,7 @@ use std::{env, ffi::CString, fs, path::PathBuf, str::FromStr};
 ))]
 use aya_rustc_llvm_proxy as _;
 use bpf_linker::{Cpu, Linker, LinkerOptions, OptLevel, OutputType};
-use clap::{Parser, error::ErrorKind};
+use clap::{CommandFactory, Parser, error::ErrorKind};
 use sbpf_linker::{SbpfLinkerError, link_program};
 
 #[derive(Debug, thiserror::Error)]
@@ -16,8 +16,6 @@ enum CliError {
         "optimization level needs to be between 0-3, s or z (instead was `{0}`)"
     )]
     InvalidOptimization(String),
-    #[error("Clap Parse Error")]
-    ClapParseError,
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
     #[error("Program Read Error. Error detail: ({msg}).")]
@@ -145,17 +143,24 @@ fn main() -> Result<(), CliError> {
         export,
         fatal_errors,
         _debug,
-    } = match Parser::try_parse_from(args) {
+    } = match CommandLine::try_parse_from(args) {
         Ok(command_line) => command_line,
         Err(err) => match err.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-                print!("{err}");
+                err.print().expect("failed to write clap output");
                 return Ok(());
             }
+            ErrorKind::MissingRequiredArgument => {
+                err.print().expect("failed to write clap output");
+                println!();
+                let mut command = CommandLine::command();
+                command.print_help().expect("failed to write clap help");
+                println!();
+                std::process::exit(err.exit_code());
+            }
             _ => {
-                // Let Clap handle its own error display for better formatting
-                eprintln!("{err}");
-                return Err(CliError::ClapParseError);
+                err.print().expect("failed to write clap output");
+                std::process::exit(err.exit_code());
             }
         },
     };
