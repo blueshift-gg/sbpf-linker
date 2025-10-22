@@ -23,9 +23,12 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     });
 
     // Ensure there's only one .rodata section
-    let rodata_count = obj.sections().filter(|s| {
-        s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
-    }).count();
+    let rodata_count = obj
+        .sections()
+        .filter(|s| {
+            s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
+        })
+        .count();
     assert!(rodata_count <= 1, "Multiple .rodata sections found");
 
     let mut rodata_table = HashMap::new();
@@ -78,7 +81,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 let node = &section.data().unwrap()[offset..offset + node_len];
                 let instruction = Instruction::from_bytes(node);
                 if let Err(error) = instruction {
-                    return Err(SbpfLinkerError::InstructionParseError(error.to_string()));
+                    return Err(SbpfLinkerError::InstructionParseError(
+                        error.to_string(),
+                    ));
                 } else {
                     ast.nodes.push(ASTNode::Instruction {
                         instruction: instruction.unwrap(),
@@ -96,8 +101,10 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         Symbol(sym) => Some(obj.symbol_by_index(sym).unwrap()),
                         _ => None,
                     };
-                
-                    if symbol.unwrap().section_index() == Some(ro_section.index()) {
+
+                    if symbol.unwrap().section_index()
+                        == Some(ro_section.index())
+                    {
                         // addend is not explicit in the relocation entry, but implicitly encoded
                         // as the immediate value of the instruction
                         let addend = match ast
@@ -125,10 +132,8 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                             Token::Identifier(ro_label_name, 0..1);
                     }
                 }
-            } else {
-                if section.relocations().count() > 0 {
-                    assert!(false, "Relocations found but no .rodata section");
-                }
+            } else if section.relocations().count() > 0 {
+                panic!("Relocations found but no .rodata section");
             }
             ast.set_text_size(section.size());
         }
