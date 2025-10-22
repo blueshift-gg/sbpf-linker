@@ -16,7 +16,6 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-# TODO: update versions for sbpf-assembler and sbpf-common
 sbpf-assembler = "0.1.5"
 sbpf-common = "0.1.5"
 clap = { version = "4.5.13", features = ["derive"] }

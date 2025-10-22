@@ -1,4 +1,5 @@
 pub mod byteparser;
+pub mod constants;
 use std::io;
 
 use bpf_linker::LinkerError;
