@@ -159,17 +159,12 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                             _ => 0,
                         };
 
-                        // Replace the immediate value with the rodata label
-                        let ro_label = rodata_table
-                            .get(&(addend as u64))
-                            .ok_or_else(|| {
-                                SbpfLinkerError::InstructionParseError(
-                                    format!(
-                                        "Rodata label not found for addend {}",
-                                        addend
-                                    ),
-                                )
-                            })?;
+                        // Replace the immediate value with the rodata labelA
+                        let Some(ro_label) = rodata_table.get(&(addend as u64)) else {
+                            return Err(SbpfLinkerError::InstructionParseError(
+                                format!("Rodata label not found for addend {}", addend)
+                            ));
+                        };
 
                         let node = ast.get_instruction_at_offset(rel.0)
                             .ok_or_else(|| {
