@@ -127,9 +127,14 @@ struct CommandLine {
 }
 
 fn main() -> Result<(), CliError> {
-    let args = env::args().map(|arg| {
-        if arg == "-flavor" { "--flavor".to_string() } else { arg }
-    });
+    if env::args().len() == 1 {
+        CommandLine::parse_from(&["sbpf-linker", "--help"]);
+        return Ok(());
+    }
+
+    let args: Vec<String> = env::args()
+        .map(|arg| if arg == "-flavor" { "--flavor".to_string() } else { arg })
+        .collect();
 
     let CommandLine {
         target,
