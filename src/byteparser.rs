@@ -73,23 +73,22 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             // lddw takes 16 bytes, other instructions take 8 bytes
             let mut offset = 0;
             while offset < section.data().unwrap().len() {
-                let node_len =
-                    match Opcode::from_u8(section.data().unwrap()[offset]) {
-                        Some(Opcode::Lddw) => 16,
-                        _ => 8,
-                    };
-                let node = &section.data().unwrap()[offset..offset + node_len];
-                let instruction = Instruction::from_bytes(node);
+                let data = &section.data().unwrap()[offset..];
+                let instruction = Instruction::from_bytes(data);
                 if let Err(error) = instruction {
                     return Err(SbpfLinkerError::InstructionParseError(
                         error.to_string(),
                     ));
-                } else {
-                    ast.nodes.push(ASTNode::Instruction {
-                        instruction: instruction.unwrap(),
-                        offset: offset as u64,
-                    });
                 }
+                let node_len = 
+                    match instruction.as_ref().unwrap().opcode {
+                        Opcode::Lddw =>16,
+                        _ => 8,
+                    };
+                ast.nodes.push(ASTNode::Instruction {
+                    instruction: instruction.unwrap(),
+                    offset: offset as u64,
+                });
                 offset += node_len;
             }
 
