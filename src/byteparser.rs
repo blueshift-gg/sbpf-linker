@@ -121,7 +121,6 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         let ro_label_name = ro_label.clone();
                         let node: &mut Instruction =
                             ast.get_instruction_at_offset(rel.0).unwrap();
-                        // let last_idx = node.operands.len() - 1;
                         node.imm = Some(Either::Left(ro_label_name));
                     }
                 }
