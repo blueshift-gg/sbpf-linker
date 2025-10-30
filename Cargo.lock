@@ -285,6 +285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -845,6 +854,7 @@ dependencies = [
  "aya-rustc-llvm-proxy",
  "bpf-linker",
  "clap",
+ "either",
  "llvm-sys 191.0.0",
  "llvm-sys 201.0.1",
  "llvm-sys 211.0.0",

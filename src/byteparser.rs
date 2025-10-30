@@ -1,10 +1,12 @@
 use sbpf_assembler::ast::AST;
 use sbpf_assembler::astnode::{ASTNode, ROData};
-use sbpf_assembler::instruction::Instruction;
-use sbpf_assembler::lexer::{ImmediateValue, Token};
+use sbpf_assembler::lexer::Token;
 use sbpf_assembler::parser::ParseResult;
-use sbpf_common::opcode::Opcode;
+use sbpf_common::{
+    inst_param::Number, instruction::Instruction, opcode::Opcode,
+};
 
+use either::Either;
 use object::RelocationTarget::Symbol;
 use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _};
 
@@ -41,7 +43,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             {
                 let mut bytes = Vec::new();
                 for i in 0..symbol.size() {
-                    bytes.push(ImmediateValue::Int(i64::from(
+                    bytes.push(Number::Int(i64::from(
                         ro_section.data().unwrap()
                             [(symbol.address() + i) as usize],
                     )));
@@ -80,11 +82,10 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         error.to_string(),
                     ));
                 }
-                let node_len = 
-                    match instruction.as_ref().unwrap().opcode {
-                        Opcode::Lddw =>16,
-                        _ => 8,
-                    };
+                let node_len = match instruction.as_ref().unwrap().opcode {
+                    Opcode::Lddw => 16,
+                    _ => 8,
+                };
                 ast.nodes.push(ASTNode::Instruction {
                     instruction: instruction.unwrap(),
                     offset: offset as u64,
@@ -109,15 +110,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         let addend = match ast
                             .get_instruction_at_offset(rel.0)
                             .unwrap()
-                            .operands
-                            .last()
-                            .unwrap()
-                            .clone()
+                            .imm
                         {
-                            Token::ImmediateValue(
-                                ImmediateValue::Int(val),
-                                _,
-                            ) => val,
+                            Some(Either::Right(Number::Int(val))) => val,
                             _ => 0,
                         };
 
@@ -126,9 +121,8 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         let ro_label_name = ro_label.clone();
                         let node: &mut Instruction =
                             ast.get_instruction_at_offset(rel.0).unwrap();
-                        let last_idx = node.operands.len() - 1;
-                        node.operands[last_idx] =
-                            Token::Identifier(ro_label_name, 0..1);
+                        // let last_idx = node.operands.len() - 1;
+                        node.imm = Some(Either::Left(ro_label_name));
                     }
                 }
             } else if section.relocations().count() > 0 {
