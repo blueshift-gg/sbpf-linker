@@ -17,24 +17,17 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
 
     let obj = File::parse(bytes)?;
 
-    // Find rodata section - could be .rodata, .rodata.str1.1, etc.
-    let ro_section = obj.sections().find(|s| {
-        s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
-    });
+    // Collect ALL rodata sections - could be .rodata, .rodata.str1.1, .rodata.cst32, etc.
+    let ro_sections: Vec<_> = obj.sections()
+        .filter(|s| s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false))
+        .collect();
 
-    // Ensure there's only one .rodata section
-    let rodata_count = obj
-        .sections()
-        .filter(|s| {
-            s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
-        })
-        .count();
-    assert!(rodata_count <= 1, "Multiple .rodata sections found");
-
+    // Use (section_index, address) as key to avoid collisions between sections
     let mut rodata_table = HashMap::new();
-    if let Some(ref ro_section) = ro_section {
-        // only handle symbols in the .rodata section for now
-        let mut rodata_offset = 0;
+    let mut rodata_offset = 0;
+
+    // Process symbols from ALL rodata sections, merging into single logical rodata
+    for ro_section in &ro_sections {
         for symbol in obj.symbols() {
             if symbol.section_index() == Some(ro_section.index())
                 && symbol.size() > 0
@@ -57,15 +50,16 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     },
                     offset: rodata_offset,
                 });
+                // Use compound key (section_index, address) to avoid collisions
                 rodata_table.insert(
-                    symbol.address(),
+                    (ro_section.index(), symbol.address()),
                     symbol.name().unwrap().to_owned(),
                 );
                 rodata_offset += symbol.size();
             }
         }
-        ast.set_rodata_size(rodata_offset);
     }
+    ast.set_rodata_size(rodata_offset);
 
     for section in obj.sections() {
         if section.name() == Ok(".text") {
@@ -92,43 +86,49 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 offset += node_len;
             }
 
-            if let Some(ref ro_section) = ro_section {
+            if !ro_sections.is_empty() {
                 // handle relocations
                 for rel in section.relocations() {
-                    // only handle relocations for symbols in the .rodata section for now
+                    // only handle relocations for symbols in any .rodata section
                     let symbol = match rel.1.target() {
                         Symbol(sym) => Some(obj.symbol_by_index(sym).unwrap()),
                         _ => None,
                     };
 
-                    if symbol.unwrap().section_index()
-                        == Some(ro_section.index())
-                    {
-                        // addend is not explicit in the relocation entry, but implicitly encoded
-                        // as the immediate value of the instruction
-                        let addend = match ast
-                            .get_instruction_at_offset(rel.0)
-                            .unwrap()
-                            .operands
-                            .last()
-                            .unwrap()
-                            .clone()
-                        {
-                            Token::ImmediateValue(
-                                ImmediateValue::Int(val),
-                                _,
-                            ) => val,
-                            _ => 0,
-                        };
+                    if let Some(sym) = symbol {
+                        // Check if symbol is in ANY rodata section
+                        let is_in_rodata = ro_sections.iter().any(|rs|
+                            sym.section_index() == Some(rs.index())
+                        );
 
-                        // Replace the immediate value with the rodata label
-                        let ro_label = &rodata_table[&(addend as u64)];
-                        let ro_label_name = ro_label.clone();
-                        let node: &mut Instruction =
-                            ast.get_instruction_at_offset(rel.0).unwrap();
-                        let last_idx = node.operands.len() - 1;
-                        node.operands[last_idx] =
-                            Token::Identifier(ro_label_name, 0..1);
+                        if is_in_rodata {
+                            // addend is not explicit in the relocation entry, but implicitly encoded
+                            // as the immediate value of the instruction
+                            let addend = match ast
+                                .get_instruction_at_offset(rel.0)
+                                .unwrap()
+                                .operands
+                                .last()
+                                .unwrap()
+                                .clone()
+                            {
+                                Token::ImmediateValue(
+                                    ImmediateValue::Int(val),
+                                    _,
+                                ) => val,
+                                _ => 0,
+                            };
+
+                            // Replace the immediate value with the rodata label
+                            // Use compound key (section_index, address) for lookup
+                            let ro_label = &rodata_table[&(sym.section_index().unwrap(), addend as u64)];
+                            let ro_label_name = ro_label.clone();
+                            let node: &mut Instruction =
+                                ast.get_instruction_at_offset(rel.0).unwrap();
+                            let last_idx = node.operands.len() - 1;
+                            node.operands[last_idx] =
+                                Token::Identifier(ro_label_name, 0..1);
+                        }
                     }
                 }
             } else if section.relocations().count() > 0 {
