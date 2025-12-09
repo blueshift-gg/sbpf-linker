@@ -1,7 +1,7 @@
 use sbpf_assembler::ast::AST;
 use sbpf_assembler::astnode::{ASTNode, ROData};
-use sbpf_assembler::lexer::Token;
 use sbpf_assembler::parser::ParseResult;
+use sbpf_assembler::Token;
 use sbpf_common::{
     inst_param::Number, instruction::Instruction, opcode::Opcode,
 };
