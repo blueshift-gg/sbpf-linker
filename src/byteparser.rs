@@ -107,7 +107,6 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     if rodata_table.contains_key(&key) {
                         // Replace the immediate value with the rodata label
                         let ro_label = &rodata_table[&key];
-                        // let ro_label = &rodata_table[&(addend as u64)];
                         let ro_label_name = ro_label.clone();
                         let node: &mut Instruction =
                             ast.get_instruction_at_offset(rel.0).unwrap();
