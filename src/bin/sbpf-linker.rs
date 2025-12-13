@@ -1,4 +1,9 @@
-use std::{env, ffi::CString, fs, path::PathBuf, str::FromStr};
+use std::{
+    env,
+    fs, io,
+    path::{Component, Path, PathBuf},
+    str::FromStr,
+};
 
 #[cfg(any(
     feature = "rust-llvm-19",
@@ -7,25 +12,31 @@ use std::{env, ffi::CString, fs, path::PathBuf, str::FromStr};
 ))]
 use aya_rustc_llvm_proxy as _;
 use bpf_linker::{Cpu, Linker, LinkerOptions, OptLevel, OutputType};
-use clap::{Parser, error::ErrorKind};
+use clap::{
+    Parser,
+    builder::{PathBufValueParser, TypedValueParser as _},
+    error::ErrorKind,
+};
+use thiserror::Error;
+use tracing::{Level, info};
+use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
+use tracing_tree::HierarchicalLayer;
+
 use sbpf_linker::{SbpfLinkerError, link_program};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 enum CliError {
     #[error(
         "optimization level needs to be between 0-3, s or z (instead was `{0}`)"
     )]
     InvalidOptimization(String),
-    #[error("Clap Parse Error")]
-    ClapParseError,
+    #[error("unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`")]
+    InvalidOutputType(String),
+    
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
-    #[error("Program Read Error. Error detail: ({msg}).")]
-    ProgramReadError { msg: String },
     #[error("Program Write Error. Error detail: ({msg}).")]
     ProgramWriteError { msg: String },
-    //     #[error("unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`")]
-    //     InvalidOutputType(String),
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -47,6 +58,37 @@ impl FromStr for CliOptLevel {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+struct CliOutputType(OutputType);
+
+impl FromStr for CliOutputType {
+    type Err = CliError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(match s {
+            "llvm-bc" => OutputType::Bitcode,
+            "asm" => OutputType::Assembly,
+            "llvm-ir" => OutputType::LlvmAssembly,
+            "obj" => OutputType::Object,
+            _ => return Err(CliError::InvalidOutputType(s.to_string())),
+        }))
+    }
+}
+
+fn parent_and_file_name(p: PathBuf) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let mut comps = p.components();
+    let file_name = comps
+        .next_back()
+        .map(|p| match p {
+            Component::Normal(p) => Ok(p),
+            p => Err(anyhow::anyhow!("unexpected path component {:?}", p)),
+        })
+        .transpose()?
+        .ok_or_else(|| anyhow::anyhow!("unexpected empty path"))?;
+    let parent = comps.as_path();
+    Ok((parent.to_path_buf(), Path::new(file_name).to_path_buf()))
+}
+
 #[derive(Debug, Parser)]
 #[command(version)]
 struct CommandLine {
@@ -58,16 +100,26 @@ struct CommandLine {
     #[clap(long, default_value = "generic")]
     cpu: Cpu,
 
+    /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris. Use
+    /// +feature to enable a feature, or -feature to disable it.  For example
+    /// --cpu-features=+alu32,-dwarfris
+    #[clap(long, value_name = "features", default_value = "")]
+    cpu_features: String,
+
     /// Write output to <output>
-    #[clap(short, long, required = true)]
+    #[clap(short, long)]
     output: PathBuf,
+
+    /// Output type. Can be one of `llvm-bc`, `asm`, `llvm-ir`, `obj`
+    #[clap(long, default_value = "obj")]
+    emit: Vec<CliOutputType>,
 
     /// Emit BTF information
     #[clap(long)]
     btf: bool,
 
-    /// Permit automatic insertion of `__bpf_trap` calls.
-    /// See: <https://github.com/llvm/llvm-project/commit/ab391beb11f733b526b86f9df23734a34657d876>
+    /// Permit automatic insertion of __bpf_trap calls.
+    /// See: https://github.com/llvm/llvm-project/commit/ab391beb11f733b526b86f9df23734a34657d876
     #[clap(long)]
     allow_bpf_trap: bool,
 
@@ -83,6 +135,19 @@ struct CommandLine {
     #[clap(long, value_name = "path")]
     export_symbols: Option<PathBuf>,
 
+    /// Output logs to the given `path`
+    #[clap(
+        long,
+        value_name = "path",
+        value_parser = PathBufValueParser::new().try_map(parent_and_file_name),
+    )]
+    log_file: Option<(PathBuf, PathBuf)>,
+
+    /// Set the log level. If not specified, no logging is used. Can be one of
+    /// `error`, `warn`, `info`, `debug`, `trace`.
+    #[clap(long, value_name = "level")]
+    log_level: Option<Level>,
+
     /// Try hard to unroll loops. Useful when targeting kernels that don't support loops
     #[clap(long)]
     unroll_loops: bool,
@@ -97,13 +162,13 @@ struct CommandLine {
 
     /// Extra command line arguments to pass to LLVM
     #[clap(long, value_name = "args", use_value_delimiter = true, action = clap::ArgAction::Append)]
-    llvm_args: Vec<CString>,
+    llvm_args: Vec<String>,
 
     /// Disable passing --bpf-expand-memcpy-in-order to LLVM.
     #[clap(long)]
     disable_expand_memcpy_in_order: bool,
 
-    /// Disable exporting `memcpy`, `memmove`, `memset`, `memcmp` and `bcmp`. Exporting
+    /// Disable exporting memcpy, memmove, memset, memcmp and bcmp. Exporting
     /// those is commonly needed when LLVM does not manage to expand memory
     /// intrinsics to a sequence of loads and stores.
     #[clap(long)]
@@ -126,7 +191,19 @@ struct CommandLine {
     _debug: bool,
 }
 
-fn main() -> Result<(), CliError> {
+/// Returns a [`HierarchicalLayer`](tracing_tree::HierarchicalLayer) for the
+/// given `writer`.
+fn tracing_layer<W>(writer: W) -> HierarchicalLayer<W>
+where
+    W: for<'writer> MakeWriter<'writer> + 'static,
+{
+    const TRACING_IDENT: usize = 2;
+    HierarchicalLayer::new(TRACING_IDENT)
+        .with_indent_lines(true)
+        .with_writer(writer)
+}
+
+fn main() -> anyhow::Result<()> {
     let args = env::args().map(|arg| {
         if arg == "-flavor" { "--flavor".to_string() } else { arg }
     });
@@ -134,12 +211,16 @@ fn main() -> Result<(), CliError> {
     let CommandLine {
         target,
         cpu,
+        cpu_features,
         output,
+        emit,
         btf,
         allow_bpf_trap,
         libs,
         optimize,
         export_symbols,
+        log_file,
+        log_level,
         unroll_loops,
         ignore_inline_never,
         dump_module,
@@ -157,20 +238,43 @@ fn main() -> Result<(), CliError> {
                 print!("{err}");
                 return Ok(());
             }
-            _ => {
-                // Let Clap handle its own error display for better formatting
-                eprintln!("{err}");
-                return Err(CliError::ClapParseError);
-            }
+            _ => return Err(err.into()),
         },
     };
 
-    let export_symbols =
-        export_symbols.map(fs::read_to_string).transpose().map_err(|e| {
-            CliError::SbpfLinkerError(SbpfLinkerError::ObjectFileReadError(e))
-        })?;
+    // Configure tracing.
+    let _guard = {
+        let filter = EnvFilter::from_default_env();
+        let filter = match log_level {
+            None => filter,
+            Some(log_level) => filter.add_directive(log_level.into()),
+        };
+        let subscriber_registry = tracing_subscriber::registry().with(filter);
+        match log_file {
+            Some((parent, file_name)) => {
+                let file_appender = tracing_appender::rolling::never(parent, file_name);
+                let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                let subscriber = subscriber_registry
+                    .with(tracing_layer(io::stdout))
+                    .with(tracing_layer(non_blocking));
+                tracing::subscriber::set_global_default(subscriber)?;
+                Some(guard)
+            }
+            None => {
+                let subscriber = subscriber_registry.with(tracing_layer(io::stderr));
+                tracing::subscriber::set_global_default(subscriber)?;
+                None
+            }
+        }
+    };
 
-    // TODO: the data is owned by this call frame; we could make this zero-alloc.
+    info!(
+        "command line: {:?}",
+        env::args().collect::<Vec<_>>().join(" ")
+    );
+
+    let export_symbols = export_symbols.map(fs::read_to_string).transpose()?;
+
     let export_symbols = export_symbols
         .as_deref()
         .into_iter()
@@ -180,6 +284,11 @@ fn main() -> Result<(), CliError> {
         .map(Into::into)
         .collect();
 
+    let output_type = match *emit.as_slice() {
+        [] => unreachable!("emit has a default value"),
+        [CliOutputType(output_type), ..] => output_type,
+    };
+
     let optimize = match *optimize.as_slice() {
         [] => unreachable!("emit has a default value"),
         [.., CliOptLevel(optimize)] => optimize,
@@ -188,40 +297,33 @@ fn main() -> Result<(), CliError> {
     let mut linker = Linker::new(LinkerOptions {
         target,
         cpu,
-        cpu_features: String::new(),
+        cpu_features,
         inputs,
         output: output.clone(),
-        output_type: OutputType::Object,
+        output_type,
         libs,
         optimize,
         export_symbols,
         unroll_loops,
         ignore_inline_never,
         dump_module,
-        llvm_args: llvm_args
-            .into_iter()
-            .map(|cstring| cstring.into_string().unwrap_or_default())
-            .collect(),
+        llvm_args,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
         btf,
         allow_bpf_trap,
     });
 
-    linker.link().map_err(|e| {
-        CliError::SbpfLinkerError(SbpfLinkerError::LinkerError(e))
-    })?;
+    linker.link()?;
 
     if fatal_errors && linker.has_errors() {
-        return Err(CliError::SbpfLinkerError(
-            SbpfLinkerError::LlvmDiagnosticError,
+        return Err(anyhow::anyhow!(
+            "LLVM issued diagnostic with error severity"
         ));
     }
 
-    let program = std::fs::read(&output)
-        .map_err(|e| CliError::ProgramReadError { msg: e.to_string() })?;
-    let bytecode =
-        link_program(&program).map_err(CliError::SbpfLinkerError)?;
+    let program = std::fs::read(&output).unwrap();
+    let bytecode = link_program(&program)?;
 
     let src_name = std::path::Path::new(&output)
         .file_stem()
