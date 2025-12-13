@@ -16,9 +16,8 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-# TODO: update versions for sbpf-assembler and sbpf-common
-sbpf-assembler = "0.1.5"
-sbpf-common = "0.1.5"
+sbpf-assembler = "0.1.6"
+sbpf-common = "0.1.6"
 clap = { version = "4.5.13", features = ["derive"] }
 either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
@@ -35,6 +34,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 tracing-tree = "0.4"
 
 tracing = "0.1"
+anyhow = "1.0.100"
 
 [[bin]]
 name = "sbpf-linker"
