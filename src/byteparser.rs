@@ -1,5 +1,5 @@
 use sbpf_assembler::ast::AST;
-use sbpf_assembler::astnode::{ASTNode, ROData};
+use sbpf_assembler::astnode::{ASTNode, Label, GlobalDecl, ROData};
 use sbpf_assembler::parser::ParseResult;
 use sbpf_assembler::Token;
 use sbpf_common::{
@@ -24,41 +24,62 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
     });
 
+    let text_section = obj.sections().find(|s| {
+        s.name().map(|name| name == ".text").unwrap_or(false)
+    });
+
     let mut rodata_table = HashMap::new();
-    for ro_section in ro_sections.iter() {
-        // only handle symbols in the .rodata section for now
-        let mut rodata_offset = 0;
-        for symbol in obj.symbols() {
-            if symbol.section_index() == Some(ro_section.index())
-                && symbol.size() > 0
-            {
-                let mut bytes = Vec::new();
-                for i in 0..symbol.size() {
-                    bytes.push(Number::Int(i64::from(
-                        ro_section.data().unwrap()
-                            [(symbol.address() + i) as usize],
-                    )));
-                }
-                ast.rodata_nodes.push(ASTNode::ROData {
-                    rodata: ROData {
-                        name: symbol.name().unwrap().to_owned(),
-                        args: vec![
-                            Token::Directive(String::from("byte"), 0..1), //
-                            Token::VectorLiteral(bytes.clone(), 0..1),
-                        ],
+    let mut rodata_offset = 0;
+    for symbol in obj.symbols() {
+        if let Some(ro_section) = //
+            ro_sections.iter().find(|s| symbol.section_index() == Some(s.index())) {
+            if symbol.size() == 0 {
+                continue;
+            }
+            let mut bytes = Vec::new();
+            for i in 0..symbol.size() {
+                bytes.push(Number::Int(i64::from(
+                    ro_section.data().unwrap()
+                        [(symbol.address() + i) as usize],
+                )));
+            }
+            ast.rodata_nodes.push(ASTNode::ROData {
+                rodata: ROData {
+                    name: symbol.name().unwrap().to_owned(),
+                    args: vec![
+                        Token::Directive(String::from("byte"), 0..1), //
+                        Token::VectorLiteral(bytes.clone(), 0..1),
+                    ],
+                    span: 0..1,
+                },
+                offset: rodata_offset,
+            });
+            rodata_table.insert(
+                (symbol.section_index(), symbol.address()),
+                symbol.name().unwrap().to_owned(),
+            );
+            rodata_offset += symbol.size();
+        } else if let Some(_) = //
+            text_section.iter().find(|s| symbol.section_index() == Some(s.index())) {
+            ast.nodes.push(ASTNode::Label {
+                label: Label{
+                    name: symbol.name().unwrap().to_owned(),
+                    span: 0..1,
+                }, 
+                offset: symbol.address(),
+            });
+            if symbol.name().unwrap() == "entrypoint" {
+                ast.nodes.push(ASTNode::GlobalDecl { 
+                    global_decl: GlobalDecl {
+                        entry_label: symbol.name().unwrap().to_owned(),
                         span: 0..1,
-                    },
-                    offset: rodata_offset,
+                    } 
                 });
-                rodata_table.insert(
-                    (symbol.section_index(), symbol.address()),
-                    symbol.name().unwrap().to_owned(),
-                );
-                rodata_offset += symbol.size();
             }
         }
-        ast.set_rodata_size(rodata_offset);
     }
+
+    ast.set_rodata_size(rodata_offset);
 
     for section in obj.sections() {
         if section.name() == Ok(".text") {
@@ -84,21 +105,21 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 offset += node_len;
             }
 
-            if ro_sections.iter().count() > 0 {
-                // handle relocations
-                for rel in section.relocations() {
-                    // only handle relocations for symbols in the .rodata section for now
-                    let symbol = match rel.1.target() {
-                        Symbol(sym) => Some(obj.symbol_by_index(sym).unwrap()),
-                        _ => None,
-                    };
-                    // addend is not explicit in the relocation entry, but implicitly encoded
-                    // as the immediate value of the instruction
-                    let addend = match ast
-                        .get_instruction_at_offset(rel.0)
-                        .unwrap()
-                        .imm
-                    {
+            // handle relocations
+            for rel in section.relocations() {
+                // only handle relocations for symbols in the .rodata section for now
+                let symbol = match rel.1.target() {
+                    Symbol(sym) => Some(obj.symbol_by_index(sym).unwrap()),
+                    _ => None,
+                };
+
+                let node: &mut Instruction =
+                    ast.get_instruction_at_offset(rel.0).unwrap();
+                
+                if node.opcode == Opcode::Lddw {
+                    // addend is not explicit in the relocation entry, but implicitly 
+                    // encoded as the immediate value of the instruction
+                    let addend = match node.imm {
                         Some(Either::Right(Number::Int(val))) => val,
                         _ => 0,
                     };
@@ -108,18 +129,18 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         // Replace the immediate value with the rodata label
                         let ro_label = &rodata_table[&key];
                         let ro_label_name = ro_label.clone();
-                        let node: &mut Instruction =
-                            ast.get_instruction_at_offset(rel.0).unwrap();
                         node.imm = Some(Either::Left(ro_label_name));
+                    } else {
+                        panic!("relocation in lddw is not in .rodata");
                     }
+                } else if node.opcode == Opcode::Call {
+                    node.imm = Some(Either::Left(symbol.unwrap().name().unwrap().to_owned()));
                 }
-            } else if section.relocations().count() > 0 {
-                panic!("Relocations found but no .rodata section");
             }
             ast.set_text_size(section.size());
         }
     }
 
-    ast.build_program()
+    ast.build_program(false)
         .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })
 }
