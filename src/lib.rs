@@ -24,7 +24,7 @@ pub enum SbpfLinkerError {
 
 pub fn link_program(source: &[u8]) -> Result<Vec<u8>, SbpfLinkerError> {
     let parse_result = parse_bytecode(source)?;
-    let program = Program::from_parse_result(parse_result);
+    let program = Program::from_parse_result(parse_result, None, false);
     let bytecode = program.emit_bytecode();
 
     Ok(bytecode)
