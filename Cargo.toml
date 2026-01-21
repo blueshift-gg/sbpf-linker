@@ -21,8 +21,7 @@ sbpf-common = { git = "https://github.com/blueshift-gg/sbpf", branch = "u128_mul
 clap = { version = "4.5.13", features = ["derive"] }
 either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
-# bpf-linker = "0.9.15"
-bpf-linker = { path = "../../BPF_LINKER/bpf-linker" }
+bpf-linker = "0.9.15"
 thiserror = "2.0.17"
 
 aya-rustc-llvm-proxy = { version = "0.9.5", optional = true }
