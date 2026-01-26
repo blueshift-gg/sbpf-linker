@@ -1,5 +1,6 @@
 use std::{
     env,
+    ffi::CString,
     fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -11,7 +12,7 @@ use std::{
     feature = "rust-llvm-21"
 ))]
 use aya_rustc_llvm_proxy as _;
-use bpf_linker::{Cpu, Linker, LinkerOptions, OptLevel, OutputType};
+use bpf_linker::{Cpu, Linker, LinkerInput, LinkerOptions, OptLevel, OutputType};
 use clap::{
     Parser,
     builder::{PathBufValueParser, TypedValueParser as _},
@@ -94,7 +95,7 @@ fn parent_and_file_name(p: PathBuf) -> anyhow::Result<(PathBuf, PathBuf)> {
 struct CommandLine {
     /// LLVM target triple. When not provided, the target is inferred from the inputs
     #[clap(long)]
-    target: Option<String>,
+    target: Option<CString>,
 
     /// Target BPF processor. Can be one of `generic`, `probe`, `v1`, `v2`, `v3`
     #[clap(long, default_value = "generic")]
@@ -104,7 +105,7 @@ struct CommandLine {
     /// +feature to enable a feature, or -feature to disable it.  For example
     /// --cpu-features=+alu32,-dwarfris
     #[clap(long, value_name = "features", default_value = "")]
-    cpu_features: String,
+    cpu_features: CString,
 
     /// Write output to <output>
     #[clap(short, long)]
@@ -125,7 +126,7 @@ struct CommandLine {
 
     /// Add a directory to the library search path
     #[clap(short = 'L', number_of_values = 1)]
-    libs: Vec<PathBuf>,
+    _libs: Vec<PathBuf>,
 
     /// Optimization level. 0-3, s, or z
     #[clap(short = 'O', default_value = "2")]
@@ -162,7 +163,7 @@ struct CommandLine {
 
     /// Extra command line arguments to pass to LLVM
     #[clap(long, value_name = "args", use_value_delimiter = true, action = clap::ArgAction::Append)]
-    llvm_args: Vec<String>,
+    llvm_args: Vec<CString>,
 
     /// Disable passing --bpf-expand-memcpy-in-order to LLVM.
     #[clap(long)]
@@ -216,7 +217,6 @@ fn main() -> anyhow::Result<()> {
         emit,
         btf,
         allow_bpf_trap,
-        libs,
         optimize,
         export_symbols,
         log_file,
@@ -231,6 +231,7 @@ fn main() -> anyhow::Result<()> {
         export,
         fatal_errors,
         _debug,
+        _libs,
     } = match Parser::try_parse_from(args) {
         Ok(command_line) => command_line,
         Err(err) => match err.kind() {
@@ -279,10 +280,7 @@ fn main() -> anyhow::Result<()> {
         .as_deref()
         .into_iter()
         .flat_map(str::lines)
-        .map(str::to_owned)
-        .chain(export)
-        .map(Into::into)
-        .collect();
+        .chain(export.iter().map(String::as_str));
 
     let output_type = match *emit.as_slice() {
         [] => unreachable!("emit has a default value"),
@@ -298,23 +296,27 @@ fn main() -> anyhow::Result<()> {
         target,
         cpu,
         cpu_features,
-        inputs,
-        output: output.clone(),
-        output_type,
-        libs,
         optimize,
-        export_symbols,
         unroll_loops,
         ignore_inline_never,
-        dump_module,
         llvm_args,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
         btf,
         allow_bpf_trap,
     });
+    
+    if let Some(path) = dump_module {
+        linker.set_dump_module_path(path);
+    }
 
-    linker.link()?;
+    let inputs = inputs
+        .iter()
+        .map(|p| LinkerInput::new_from_file(p.as_path()));
+
+    linker.link_to_file(inputs, &output, output_type, export_symbols)?;
+
+    print!("{:?}", output);
 
     if fatal_errors && linker.has_errors() {
         return Err(anyhow::anyhow!(
