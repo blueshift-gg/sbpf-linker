@@ -1,3 +1,5 @@
+use object::build::elf::SectionData;
+use object::build::{ByteString, Bytes};
 use sbpf_assembler::Token;
 use sbpf_assembler::ast::AST;
 use sbpf_assembler::astnode::{ASTNode, ROData};
@@ -8,7 +10,7 @@ use sbpf_common::{
 
 use either::Either;
 use object::RelocationTarget::Symbol;
-use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _};
+use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _, elf};
 
 use std::collections::HashMap;
 
@@ -122,4 +124,50 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
 
     ast.build_program()
         .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })
+}
+
+pub fn keep_dwarf(
+    source: &[u8],
+    bytecode: &[u8],
+) -> Result<Vec<u8>, SbpfLinkerError> {
+    let src = File::parse(source)?;
+    let mut builder = object::build::elf::Builder::read(bytecode)
+        .map_err(SbpfLinkerError::ObjectBuilderReadError)?;
+
+    // Move .shstrtab to the end so its high file offset doesn't
+    // precede the debug sections in the section header table.
+    // The sBPF loader requires sections in ascending offset order.
+    let shstrtab = builder
+        .sections
+        .iter_mut()
+        .find(|s| matches!(s.data, SectionData::SectionString));
+    if let Some(s) = shstrtab {
+        s.delete = true;
+    }
+
+    for section in src.sections() {
+        if let Ok(section_name) = section.name()
+            && section_name.starts_with(".debug")
+        {
+            {
+                let new_section = builder.sections.add();
+                new_section.name = ByteString::from(section_name);
+                new_section.data =
+                    SectionData::Data(Bytes::from(section.data()?));
+                new_section.sh_type = elf::SHT_PROGBITS;
+                new_section.sh_addralign = 1;
+            }
+        }
+    }
+
+    // Re-add .shstrtab at the end of the section table
+    let shstrtab = builder.sections.add();
+    shstrtab.name = ByteString::from(".s");
+    shstrtab.sh_type = elf::SHT_STRTAB;
+    shstrtab.sh_addralign = 1;
+    shstrtab.data = SectionData::SectionString;
+
+    let mut out = Vec::new();
+    builder.write(&mut out)?;
+    Ok(out)
 }
