@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs, io,
+    env, fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
 };
@@ -30,9 +29,11 @@ enum CliError {
         "optimization level needs to be between 0-3, s or z (instead was `{0}`)"
     )]
     InvalidOptimization(String),
-    #[error("unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`")]
+    #[error(
+        "unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`"
+    )]
     InvalidOutputType(String),
-    
+
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
     #[error("Program Write Error. Error detail: ({msg}).")]
@@ -252,8 +253,10 @@ fn main() -> anyhow::Result<()> {
         let subscriber_registry = tracing_subscriber::registry().with(filter);
         match log_file {
             Some((parent, file_name)) => {
-                let file_appender = tracing_appender::rolling::never(parent, file_name);
-                let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                let file_appender =
+                    tracing_appender::rolling::never(parent, file_name);
+                let (non_blocking, guard) =
+                    tracing_appender::non_blocking(file_appender);
                 let subscriber = subscriber_registry
                     .with(tracing_layer(io::stdout))
                     .with(tracing_layer(non_blocking));
@@ -261,17 +264,15 @@ fn main() -> anyhow::Result<()> {
                 Some(guard)
             }
             None => {
-                let subscriber = subscriber_registry.with(tracing_layer(io::stderr));
+                let subscriber =
+                    subscriber_registry.with(tracing_layer(io::stderr));
                 tracing::subscriber::set_global_default(subscriber)?;
                 None
             }
         }
     };
 
-    info!(
-        "command line: {:?}",
-        env::args().collect::<Vec<_>>().join(" ")
-    );
+    info!("command line: {:?}", env::args().collect::<Vec<_>>().join(" "));
 
     let export_symbols = export_symbols.map(fs::read_to_string).transpose()?;
 
