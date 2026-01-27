@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs, io,
+    env, fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
 };
@@ -22,7 +21,7 @@ use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
 use tracing_tree::HierarchicalLayer;
 
-use sbpf_linker::{SbpfLinkerError, link_program};
+use sbpf_linker::{SbpfLinkerError, byteparser::keep_dwarf, link_program};
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -30,9 +29,11 @@ enum CliError {
         "optimization level needs to be between 0-3, s or z (instead was `{0}`)"
     )]
     InvalidOptimization(String),
-    #[error("unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`")]
+    #[error(
+        "unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`"
+    )]
     InvalidOutputType(String),
-    
+
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
     #[error("Program Write Error. Error detail: ({msg}).")]
@@ -114,9 +115,9 @@ struct CommandLine {
     #[clap(long, default_value = "obj")]
     emit: Vec<CliOutputType>,
 
-    /// Emit BTF information
+    /// Emit Debug information
     #[clap(long)]
-    btf: bool,
+    dwarf: bool,
 
     /// Permit automatic insertion of __bpf_trap calls.
     /// See: https://github.com/llvm/llvm-project/commit/ab391beb11f733b526b86f9df23734a34657d876
@@ -214,7 +215,7 @@ fn main() -> anyhow::Result<()> {
         cpu_features,
         output,
         emit,
-        btf,
+        dwarf,
         allow_bpf_trap,
         libs,
         optimize,
@@ -252,8 +253,10 @@ fn main() -> anyhow::Result<()> {
         let subscriber_registry = tracing_subscriber::registry().with(filter);
         match log_file {
             Some((parent, file_name)) => {
-                let file_appender = tracing_appender::rolling::never(parent, file_name);
-                let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                let file_appender =
+                    tracing_appender::rolling::never(parent, file_name);
+                let (non_blocking, guard) =
+                    tracing_appender::non_blocking(file_appender);
                 let subscriber = subscriber_registry
                     .with(tracing_layer(io::stdout))
                     .with(tracing_layer(non_blocking));
@@ -261,17 +264,15 @@ fn main() -> anyhow::Result<()> {
                 Some(guard)
             }
             None => {
-                let subscriber = subscriber_registry.with(tracing_layer(io::stderr));
+                let subscriber =
+                    subscriber_registry.with(tracing_layer(io::stderr));
                 tracing::subscriber::set_global_default(subscriber)?;
                 None
             }
         }
     };
 
-    info!(
-        "command line: {:?}",
-        env::args().collect::<Vec<_>>().join(" ")
-    );
+    info!("command line: {:?}", env::args().collect::<Vec<_>>().join(" "));
 
     let export_symbols = export_symbols.map(fs::read_to_string).transpose()?;
 
@@ -310,7 +311,7 @@ fn main() -> anyhow::Result<()> {
         llvm_args,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
-        btf,
+        btf: dwarf, // can get dwarf if btf is on
         allow_bpf_trap,
     });
 
@@ -333,8 +334,19 @@ fn main() -> anyhow::Result<()> {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join(format!("{src_name}.so"));
-    std::fs::write(output_path, bytecode)
+    std::fs::write(output_path, &bytecode)
         .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+
+    if dwarf {
+        let bytecode_with_debug = keep_dwarf(&program, &bytecode)?;
+        let debug_output_path = std::path::Path::new(&output)
+            .parent()
+            .and_then(|e| e.parent())
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(format!("{src_name}.so.debug"));
+        std::fs::write(debug_output_path, bytecode_with_debug)
+            .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+    }
 
     Ok(())
 }
