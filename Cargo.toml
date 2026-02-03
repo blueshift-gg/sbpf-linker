@@ -18,7 +18,7 @@ name = "sbpf_linker"
 [dependencies]
 sbpf-assembler = "0.1.6"
 sbpf-common = "0.1.6"
-clap = { version = "4.5.13", features = ["derive"] }
+clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
 bpf-linker = "0.10.0"
@@ -29,8 +29,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 tracing-tree = "0.4"
 
 tracing = "0.1"
-anyhow = "1.0.100"
+anyhow = { workspace = true }
 
 [[bin]]
 name = "sbpf-linker"
+
+[workspace]
+members = ["xtask"]
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.13", features = ["derive"] }
+walkdir = "2.5.0"
+
+
+[workspace.package]
+edition = "2024"
 
