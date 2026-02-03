@@ -21,7 +21,7 @@ sbpf-common = "0.1.6"
 clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
-bpf-linker = "0.10.0"
+bpf-linker = { version = "0.10.0", default-features = false }
 thiserror = "2.0.17"
 
 tracing-appender = "0.2"
@@ -39,10 +39,12 @@ members = ["xtask"]
 
 [workspace.dependencies]
 anyhow = "1.0.100"
-clap = { version = "4.5.13", features = ["derive"] }
+clap = { version = "4.5.56", features = ["derive"] }
 walkdir = "2.5.0"
 
 
 [workspace.package]
 edition = "2024"
 
+[features]
+default = ["bpf-linker/default"]

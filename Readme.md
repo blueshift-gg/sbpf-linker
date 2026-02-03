@@ -11,20 +11,20 @@
 cargo install sbpf-linker
 ```
 
+### Upstream Gallery: Early Feature Gate
+This section provides instructions for building the linker with upstream LLVM features.
+The xtask command will clone the `upstream-gallery-21` branch from the Blueshift LLVM fork and then build the sbpf-linker with static LLVM linking.
+
+```sh
+cargo xtask
+```
+
 ### Generate a Program
 
 ```sh
 cargo generate --git https://github.com/blueshift-gg/solana-upstream-bpf-template
 ```
 
-### Building LLVM from source
-
-The xtask command will clone the `upstream-gallery-21` branch from the Blueshift LLVM fork.
-
 ```sh
-cargo task build-llvm --src-dir ./llvm-project --build-dir ./llvm-build --install-prefix ./llvm-install
-```
-
-```sh
-LLVM_PREFIX=./llvm-install cargo +nightly install --path .
+cargo +nightly build-bpf
 ```
