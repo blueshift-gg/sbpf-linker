@@ -12,7 +12,7 @@ cargo install sbpf-linker
 ```
 
 ### Upstream Gallery: Early Feature Gate
-The xtask command will clone the `upstream-gallery-21` branch from the Blueshift LLVM fork and then build the sbpf-linker with static LLVM linking.
+The xtask command will clone the [`upstream-gallery-21`](https://github.com/blueshift-gg/llvm-project/tree/upstream-gallery-21) branch from the Blueshift LLVM fork and then build the sbpf-linker with static LLVM linking.
 
 ```sh
 cargo xtask
