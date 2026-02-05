@@ -21,7 +21,7 @@ sbpf-common = "0.1.6"
 clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
-bpf-linker = { version = "0.10.0", default-features = false }
+bpf-linker = { version = "0.10.1", default-features = false }
 thiserror = "2.0.17"
 
 tracing-appender = "0.2"
@@ -48,3 +48,4 @@ edition = "2024"
 
 [features]
 default = ["bpf-linker/default"]
+upstream-gallery-21 = ["bpf-linker/llvm-21"]

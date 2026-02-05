@@ -222,9 +222,9 @@ fn build_linker(llvm_install_dir: &PathBuf) -> Result<()> {
         ".",
         "--no-default-features",
         "--features",
-        "bpf-linker/llvm-21,bpf-linker/llvm-link-static",
+        "upstream-gallery-21,bpf-linker/llvm-link-static",
     ])
-    .env("LLVM_PREFIX", llvm_install_dir)
+    .env("LLVM_SYS_211_PREFIX", llvm_install_dir)
     .current_dir(&project_root);
 
     if cfg!(target_os = "macos") {
