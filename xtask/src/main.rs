@@ -1,7 +1,6 @@
 use std::{ffi::OsString, fs, path::PathBuf, process::Command};
 
 use anyhow::{Context, Result};
-use walkdir::WalkDir;
 
 const LLVM_REPO: &str = "https://github.com/blueshift-gg/llvm-project.git";
 const LLVM_BRANCH: &str = "upstream-gallery-21";
@@ -145,36 +144,6 @@ fn build() -> Result<()> {
             anyhow::bail!(
                 "failed to build LLVM with command {cmake_configure:?}: {status}"
             );
-        }
-
-        // Move targets over the symlinks that point to them.
-        //
-        // This whole dance would be simpler if CMake supported
-        // `CMAKE_INSTALL_MODE=MOVE`.
-        for entry in WalkDir::new(&llvm_install_dir).follow_links(false) {
-            let entry = entry.with_context(|| {
-                format!(
-                    "failed to read filesystem entry while traversing install prefix {}",
-                    llvm_install_dir.display()
-                )
-            })?;
-            if !entry.file_type().is_symlink() {
-                continue;
-            }
-
-            let link_path = entry.path();
-            let target = fs::read_link(link_path).with_context(|| {
-                format!("failed to read the link {}", link_path.display())
-            })?;
-            if target.is_absolute() {
-                fs::rename(&target, link_path).with_context(|| {
-                    format!(
-                        "failed to move the target file {} to the location of the symlink {}",
-                        target.display(),
-                        link_path.display()
-                    )
-                })?;
-            }
         }
 
         // Confirmation log to show which llvm-config was used.
