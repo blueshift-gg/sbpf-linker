@@ -1,2 +1,2 @@
 [alias]
-xtask = "run -p xtask"
+install-with-gallery = "run -p xtask"
