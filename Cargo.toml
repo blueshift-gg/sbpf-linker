@@ -20,7 +20,7 @@ sbpf-assembler = "0.1.6"
 sbpf-common = "0.1.6"
 clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
-object = "0.37.3"
+object = { version = "0.37.3", features = ["build"] }
 bpf-linker = { version = "0.10.1", default-features = false }
 thiserror = "2.0.17"
 

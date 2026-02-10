@@ -8,6 +8,8 @@ use sbpf_assembler::{CompileError, Program};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SbpfLinkerError {
+    #[error("Error reading object builder file. Error detail: ({0}).")]
+    ObjectBuilderReadError(#[from] object::build::Error),
     #[error("Error opening object file. Error detail: ({0}).")]
     ObjectFileOpenError(#[from] object::Error),
     #[error("Error reading object file. Error detail: ({0}).")]

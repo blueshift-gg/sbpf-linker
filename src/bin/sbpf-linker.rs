@@ -19,7 +19,7 @@ use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
 use tracing_tree::HierarchicalLayer;
 
-use sbpf_linker::{SbpfLinkerError, link_program};
+use sbpf_linker::{SbpfLinkerError, byteparser::keep_dwarf, link_program};
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -113,9 +113,9 @@ struct CommandLine {
     #[clap(long, default_value = "obj")]
     emit: Vec<CliOutputType>,
 
-    /// Emit BTF information
+    /// Emit Debug information
     #[clap(long)]
-    btf: bool,
+    dwarf: bool,
 
     /// Permit automatic insertion of __bpf_trap calls.
     /// See: https://github.com/llvm/llvm-project/commit/ab391beb11f733b526b86f9df23734a34657d876
@@ -213,7 +213,7 @@ fn main() -> anyhow::Result<()> {
         cpu_features,
         output,
         emit,
-        btf,
+        dwarf,
         allow_bpf_trap,
         optimize,
         export_symbols,
@@ -300,7 +300,7 @@ fn main() -> anyhow::Result<()> {
         llvm_args,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
-        btf,
+        btf: dwarf, // can get dwarf if btf is on
         allow_bpf_trap,
     });
 
@@ -332,8 +332,19 @@ fn main() -> anyhow::Result<()> {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join(format!("{src_name}.so"));
-    std::fs::write(output_path, bytecode)
+    std::fs::write(output_path, &bytecode)
         .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+
+    if dwarf {
+        let bytecode_with_debug = keep_dwarf(&program, &bytecode)?;
+        let debug_output_path = std::path::Path::new(&output)
+            .parent()
+            .and_then(|e| e.parent())
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(format!("{src_name}.so.debug"));
+        std::fs::write(debug_output_path, bytecode_with_debug)
+            .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+    }
 
     Ok(())
 }
