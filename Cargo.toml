@@ -16,11 +16,13 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-sbpf-assembler = "0.1.6"
-sbpf-common = "0.1.6"
+# sbpf-assembler = "0.1.6"
+sbpf-assembler = { git = "https://github.com/procdump/blueshift-sbpf.git", branch = "reuse_debug_sections" }
+# sbpf-common = "0.1.6"
+sbpf-common = { git = "https://github.com/procdump/blueshift-sbpf.git", branch = "reuse_debug_sections" }
 clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
-object = { version = "0.37.3", features = ["build"] }
+object = "0.37.3"
 bpf-linker = { version = "0.10.1", default-features = false }
 thiserror = "2.0.17"
 

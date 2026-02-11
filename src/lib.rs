@@ -8,8 +8,6 @@ use sbpf_assembler::{CompileError, Program};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SbpfLinkerError {
-    #[error("Error reading object builder file. Error detail: ({0}).")]
-    ObjectBuilderReadError(#[from] object::build::Error),
     #[error("Error opening object file. Error detail: ({0}).")]
     ObjectFileOpenError(#[from] object::Error),
     #[error("Error reading object file. Error detail: ({0}).")]
@@ -26,7 +24,7 @@ pub enum SbpfLinkerError {
 
 pub fn link_program(source: &[u8]) -> Result<Vec<u8>, SbpfLinkerError> {
     let parse_result = parse_bytecode(source)?;
-    let program = Program::from_parse_result(parse_result);
+    let program = Program::from_parse_result(parse_result, None);
     let bytecode = program.emit_bytecode();
 
     Ok(bytecode)
