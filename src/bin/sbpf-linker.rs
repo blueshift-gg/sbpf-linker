@@ -113,7 +113,7 @@ struct CommandLine {
     #[clap(long, default_value = "obj")]
     emit: Vec<CliOutputType>,
 
-    /// Emit BTF information
+    /// Emit BTF information. Can get DWARF symbols only if BTF is enabled and if requested from `rustc` with `-C debuginfo=N`
     #[clap(long)]
     btf: bool,
 
@@ -213,7 +213,7 @@ fn main() -> anyhow::Result<()> {
         cpu_features,
         output,
         emit,
-        btf: _,
+        btf,
         allow_bpf_trap,
         optimize,
         export_symbols,
@@ -300,11 +300,7 @@ fn main() -> anyhow::Result<()> {
         llvm_args,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
-        // Motivation for being always enabled here:
-        // - can get dwarf symbols only if btf is enabled and
-        //   if requested from rustc with `-C debuginfo=N`;
-        // - keep it always enabled as it will be stripped anyway
-        btf: true,
+        btf,
         allow_bpf_trap,
     });
 
