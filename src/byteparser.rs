@@ -123,12 +123,11 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             && section_name.starts_with(".debug_")
         {
             // So we have debug sections, keep them around.
-            debug_sections.push(DebugSection {
-                name: section_name.into(),
-                data: section.data().unwrap().to_vec(),
-                name_offset: 0, // will compute during emitting
-                offset: 0,      // will compute during emitting
-            });
+            debug_sections.push(DebugSection::new(
+                section_name.into(),
+                0, // will compute during emitting
+                section.data().unwrap().to_vec(),
+            ));
         }
     }
 
