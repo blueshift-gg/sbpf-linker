@@ -183,18 +183,8 @@ fn build() -> Result<()> {
 
 fn build_linker(llvm_install_dir: &PathBuf) -> Result<()> {
     let project_root = project_root()?;
-
+    
     let mut cmd = Command::new("cargo");
-    cmd.args([
-        "install",
-        "--path",
-        ".",
-        "--no-default-features",
-        "--features",
-        "upstream-gallery-21,bpf-linker/llvm-link-static",
-    ])
-    .env("LLVM_SYS_211_PREFIX", llvm_install_dir)
-    .current_dir(&project_root);
 
     if cfg!(target_os = "macos") {
         ensure_brew_dependencies()?;
@@ -255,6 +245,17 @@ fn build_linker(llvm_install_dir: &PathBuf) -> Result<()> {
         cmd.env("ZLIB_PATH", format!("{}/lib", zlib_prefix));
         cmd.env("LIBZSTD_PATH", format!("{}/lib", zstd_prefix));
     }
+
+    cmd.args([
+        "install",
+        "--path",
+        ".",
+        "--no-default-features",
+        "--features",
+        "upstream-gallery-21,bpf-linker/llvm-link-static",
+    ])
+    .env("LLVM_PREFIX", llvm_install_dir)
+    .current_dir(&project_root);
 
     run_command(&mut cmd, "build sbpf-linker (static)")?;
     Ok(())
