@@ -2,6 +2,7 @@ use sbpf_assembler::Token;
 use sbpf_assembler::ast::AST;
 use sbpf_assembler::astnode::{ASTNode, ROData};
 use sbpf_assembler::parser::ParseResult;
+use sbpf_assembler::section::DebugSection;
 use sbpf_common::{
     inst_param::Number, instruction::Instruction, opcode::Opcode,
 };
@@ -60,6 +61,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         ast.set_rodata_size(rodata_offset);
     }
 
+    let mut debug_sections = Vec::default();
     for section in obj.sections() {
         if section.name() == Ok(".text") {
             // parse text section and build instruction nodes
@@ -117,9 +119,23 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 panic!("Relocations found but no .rodata section");
             }
             ast.set_text_size(section.size());
+        } else if let Ok(section_name) = section.name()
+            && section_name.starts_with(".debug_")
+        {
+            // So we have debug sections, keep them around.
+            debug_sections.push(DebugSection::new(
+                section_name.into(),
+                0, // will compute during emitting
+                section.data().unwrap().to_vec(),
+            ));
         }
     }
 
-    ast.build_program()
-        .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })
+    let mut parse_result = ast
+        .build_program(sbpf_assembler::SbpfArch::V0)
+        .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })?;
+
+    parse_result.debug_sections = debug_sections;
+
+    Ok(parse_result)
 }
