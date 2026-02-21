@@ -113,7 +113,7 @@ struct CommandLine {
     #[clap(long, default_value = "obj")]
     emit: Vec<CliOutputType>,
 
-    /// Emit BTF information
+    /// Emit BTF information. Can get DWARF symbols only if BTF is enabled and if requested from `rustc` with `-C debuginfo=N`
     #[clap(long)]
     btf: bool,
 
