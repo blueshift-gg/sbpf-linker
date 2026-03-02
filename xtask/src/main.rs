@@ -253,6 +253,7 @@ fn build_linker(llvm_install_dir: &PathBuf) -> Result<()> {
         "--no-default-features",
         "--features",
         "upstream-gallery-21,bpf-linker/llvm-link-static",
+        "--force"
     ])
     .env("LLVM_PREFIX", llvm_install_dir)
     .current_dir(&project_root);
