@@ -1,6 +1,6 @@
 use sbpf_assembler::Token;
 use sbpf_assembler::ast::AST;
-use sbpf_assembler::astnode::{ASTNode, Label, GlobalDecl, ROData};
+use sbpf_assembler::astnode::{ASTNode, GlobalDecl, Label, ROData};
 use sbpf_assembler::parser::ParseResult;
 use sbpf_assembler::section::DebugSection;
 use sbpf_common::{
@@ -25,15 +25,17 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
     });
 
-    let text_section = obj.sections().find(|s| {
-        s.name().map(|name| name == ".text").unwrap_or(false)
-    });
+    let text_section = obj
+        .sections()
+        .find(|s| s.name().map(|name| name == ".text").unwrap_or(false));
 
     let mut rodata_table = HashMap::new();
     let mut rodata_offset = 0;
     for symbol in obj.symbols() {
-        if let Some(ro_section) = //
-            ro_sections.iter().find(|s| symbol.section_index() == Some(s.index())) {
+        if let Some(ro_section) = ro_sections
+            .iter()
+            .find(|s| symbol.section_index() == Some(s.index()))
+        {
             if symbol.size() == 0 {
                 continue;
             }
@@ -48,7 +50,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 rodata: ROData {
                     name: symbol.name().unwrap().to_owned(),
                     args: vec![
-                        Token::Directive(String::from("byte"), 0..1), //
+                        Token::Directive(String::from("byte"), 0..1),
                         Token::VectorLiteral(bytes.clone(), 0..1),
                     ],
                     span: 0..1,
@@ -60,21 +62,23 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 symbol.name().unwrap().to_owned(),
             );
             rodata_offset += symbol.size();
-        } else if let Some(_) = //
-            text_section.iter().find(|s| symbol.section_index() == Some(s.index())) {
+        } else if let Some(_) = text_section
+            .iter()
+            .find(|s| symbol.section_index() == Some(s.index()))
+        {
             ast.nodes.push(ASTNode::Label {
-                label: Label{
+                label: Label {
                     name: symbol.name().unwrap().to_owned(),
                     span: 0..1,
-                }, 
+                },
                 offset: symbol.address(),
             });
             if symbol.name().unwrap() == "entrypoint" {
-                ast.nodes.push(ASTNode::GlobalDecl { 
+                ast.nodes.push(ASTNode::GlobalDecl {
                     global_decl: GlobalDecl {
                         entry_label: symbol.name().unwrap().to_owned(),
                         span: 0..1,
-                    } 
+                    },
                 });
             }
         }
@@ -117,9 +121,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
 
                 let node: &mut Instruction =
                     ast.get_instruction_at_offset(rel.0).unwrap();
-                
+
                 if node.opcode == Opcode::Lddw {
-                    // addend is not explicit in the relocation entry, but implicitly 
+                    // addend is not explicit in the relocation entry, but implicitly
                     // encoded as the immediate value of the instruction
                     let addend = match node.imm {
                         Some(Either::Right(Number::Int(val))) => val,
@@ -136,7 +140,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         panic!("relocation in lddw is not in .rodata");
                     }
                 } else if node.opcode == Opcode::Call {
-                    node.imm = Some(Either::Left(symbol.unwrap().name().unwrap().to_owned()));
+                    node.imm = Some(Either::Left(
+                        symbol.unwrap().name().unwrap().to_owned(),
+                    ));
                 }
             }
             ast.set_text_size(section.size());
