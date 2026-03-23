@@ -20,10 +20,16 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
 
     let obj = File::parse(bytes)?;
 
-    // Find rodata section - could be .rodata, .rodata.str1.1, etc.
-    let ro_sections = obj.sections().find(|s| {
-        s.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
-    });
+    // Track all .rodata* inputs, but keep AST rodata layout packed by node size.
+    let mut ro_sections = HashMap::new();
+    for section in obj.sections().filter(|section| {
+        section
+            .name()
+            .map(|name| name.starts_with(".rodata"))
+            .unwrap_or(false)
+    }) {
+        ro_sections.insert(section.index(), section);
+    }
 
     let text_section = obj
         .sections()
@@ -32,9 +38,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     let mut rodata_table = HashMap::new();
     let mut rodata_offset = 0;
     for symbol in obj.symbols() {
-        if let Some(ro_section) = ro_sections
-            .iter()
-            .find(|s| symbol.section_index() == Some(s.index()))
+        if let Some(ro_section) = symbol
+            .section_index()
+            .and_then(|section_index| ro_sections.get(&section_index))
         {
             if symbol.size() == 0 {
                 continue;
@@ -83,7 +89,6 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             }
         }
     }
-
     let mut debug_sections = Vec::default();
     ast.set_rodata_size(rodata_offset);
 
@@ -115,8 +120,8 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             for rel in section.relocations() {
                 // only handle relocations for symbols in the .rodata section for now
                 let symbol = match rel.1.target() {
-                    Symbol(sym) => Some(obj.symbol_by_index(sym).unwrap()),
-                    _ => None,
+                    Symbol(sym) => obj.symbol_by_index(sym).unwrap(),
+                    _ => continue,
                 };
 
                 let node: &mut Instruction =
@@ -130,7 +135,10 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         _ => 0,
                     };
 
-                    let key = (symbol.unwrap().section_index(), addend as u64);
+                    let key = (
+                        symbol.section_index(),
+                        addend as u64,
+                    );
                     if rodata_table.contains_key(&key) {
                         // Replace the immediate value with the rodata label
                         let ro_label = &rodata_table[&key];
@@ -141,7 +149,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     }
                 } else if node.opcode == Opcode::Call {
                     node.imm = Some(Either::Left(
-                        symbol.unwrap().name().unwrap().to_owned(),
+                        symbol.name().unwrap().to_owned(),
                     ));
                 }
             }
