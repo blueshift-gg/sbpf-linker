@@ -19,7 +19,8 @@ use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
 use tracing_tree::HierarchicalLayer;
 
-use sbpf_linker::{SbpfLinkerError, link_program};
+use sbpf_assembler::SbpfArch;
+use sbpf_linker::{SbpfLinkerError, SbpfLinkerOptions, link_program};
 
 #[derive(Debug, Error)]
 enum CliError {
@@ -31,6 +32,8 @@ enum CliError {
         "unknown emission type: `{0}` - expected one of: `llvm-bc`, `asm`, `llvm-ir`, `obj`"
     )]
     InvalidOutputType(String),
+    #[error("unknown sBPF version: `{0}` - expected one of: `v0`, `v3`")]
+    InvalidSbpfVersion(String),
 
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
@@ -70,6 +73,21 @@ impl FromStr for CliOutputType {
             "llvm-ir" => OutputType::LlvmAssembly,
             "obj" => OutputType::Object,
             _ => return Err(CliError::InvalidOutputType(s.to_string())),
+        }))
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct CliSbpfVersion(SbpfArch);
+
+impl FromStr for CliSbpfVersion {
+    type Err = CliError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(match s {
+            "v0" => SbpfArch::V0,
+            "v3" => SbpfArch::V3,
+            _ => return Err(CliError::InvalidSbpfVersion(s.to_string())),
         }))
     }
 }
@@ -185,6 +203,14 @@ struct CommandLine {
     #[clap(long, action = clap::ArgAction::Set, default_value_t = true)]
     fatal_errors: bool,
 
+    /// Allow relocations to writable data sections (.data/.bss).
+    #[clap(long)]
+    enable_writable_data: bool,
+
+    /// Target sBPF version. Can be one of `v0`, `v3`
+    #[clap(long, default_value = "v0")]
+    sbpf: CliSbpfVersion,
+
     // The options below are for wasm-ld compatibility
     #[clap(long = "debug", hide = true)]
     _debug: bool,
@@ -228,6 +254,8 @@ fn main() -> anyhow::Result<()> {
         inputs,
         export,
         fatal_errors,
+        enable_writable_data,
+        sbpf,
         _debug,
         _libs,
     } = match Parser::try_parse_from(args) {
@@ -322,7 +350,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     let program = std::fs::read(&output).unwrap();
-    let bytecode = link_program(&program)?;
+    let bytecode = link_program(
+        &program,
+        SbpfLinkerOptions {
+            allow_writable_data: enable_writable_data,
+            sbpf_version: sbpf.0,
+        },
+    )?;
 
     let src_name = std::path::Path::new(&output)
         .file_stem()
