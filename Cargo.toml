@@ -16,8 +16,8 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-sbpf-assembler = { version = "0.1.8", git = "https://github.com/blueshift-gg/sbpf.git", rev = "da49c708206baccf5cb7133fc5d8c868bb6bdf86" }
-sbpf-common = { version = "0.1.8", git = "https://github.com/blueshift-gg/sbpf.git", rev = "da49c708206baccf5cb7133fc5d8c868bb6bdf86" }
+sbpf-assembler = { version = "0.1.8", git = "https://github.com/blueshift-gg/sbpf.git", branch = "feature/v3-writable-data" }
+sbpf-common = { version = "0.1.8", git = "https://github.com/blueshift-gg/sbpf.git", branch = "feature/v3-writable-data" }
 clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
 object = "0.37.3"
