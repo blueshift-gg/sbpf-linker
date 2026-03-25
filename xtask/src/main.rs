@@ -3,11 +3,44 @@ use std::{ffi::OsString, fs, path::PathBuf, process::Command};
 use anyhow::{Context, Result};
 
 const LLVM_REPO: &str = "https://github.com/blueshift-gg/llvm-project.git";
-const LLVM_BRANCH: &str = "upstream-gallery-21";
 const GIT_DEPTH: &str = "1";
+const NIGHTLY_TOOLCHAIN: &str = "nightly";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GalleryRelease {
+    cargo_feature: &'static str,
+    llvm_branch: &'static str,
+}
+
+impl GalleryRelease {
+    const fn upstream_gallery_21() -> Self {
+        Self {
+            cargo_feature: "upstream-gallery-21",
+            llvm_branch: "upstream-gallery-21",
+        }
+    }
+
+    const fn upstream_gallery_22() -> Self {
+        Self {
+            cargo_feature: "upstream-gallery-22",
+            llvm_branch: "upstream-gallery-22",
+        }
+    }
+
+    fn from_llvm_major(llvm_major: u32) -> Result<Self> {
+        match llvm_major {
+            21 => Ok(Self::upstream_gallery_21()),
+            22 => Ok(Self::upstream_gallery_22()),
+            other => anyhow::bail!(
+                "unsupported rustc LLVM major version `{other}`; expected one of: 21, 22"
+            ),
+        }
+    }
+}
 
 fn main() -> Result<()> {
-    build()
+    let gallery = detect_gallery_release()?;
+    build(gallery)
 }
 
 fn project_root() -> Result<PathBuf> {
@@ -23,15 +56,90 @@ fn project_root() -> Result<PathBuf> {
     }
 }
 
-fn cache_dir() -> PathBuf {
+fn cache_dir(gallery: GalleryRelease) -> PathBuf {
     // Build tools outside the project to avoid Cargo workspace issues
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("sbpf-linker-upstream-gallery")
+        .join(format!("sbpf-linker-{}", gallery.llvm_branch))
 }
 
-fn build() -> Result<()> {
-    let base_dir = cache_dir();
+#[derive(Debug, PartialEq, Eq)]
+struct RustcVersionInfo {
+    release: String,
+    llvm_version: String,
+    llvm_major: u32,
+}
+
+fn parse_rustc_version_info(stdout: &str) -> Result<RustcVersionInfo> {
+    let release = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("release: "))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("missing `release:` in `rustc -vV` output")
+        })?
+        .to_string();
+
+    let llvm_version = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("LLVM version: "))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("missing `LLVM version:` in `rustc -vV` output")
+        })?
+        .to_string();
+
+    let llvm_major = llvm_version
+        .split('.')
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing LLVM major version"))?
+        .parse::<u32>()?;
+
+    Ok(RustcVersionInfo { release, llvm_version, llvm_major })
+}
+
+fn detect_gallery_release() -> Result<GalleryRelease> {
+    let output = Command::new("rustup")
+        .args(["run", NIGHTLY_TOOLCHAIN, "rustc", "-vV"])
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to run `rustup run {NIGHTLY_TOOLCHAIN} rustc -vV`"
+            )
+        })?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "`rustup run {NIGHTLY_TOOLCHAIN} rustc -vV` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let rustc = parse_rustc_version_info(
+        String::from_utf8_lossy(&output.stdout).as_ref(),
+    )?;
+    let gallery = GalleryRelease::from_llvm_major(rustc.llvm_major).with_context(|| {
+        format!(
+            "{NIGHTLY_TOOLCHAIN} rustc {} uses LLVM {}; no matching upstream gallery branch is configured",
+            rustc.release,
+            rustc.llvm_version
+        )
+    })?;
+
+    println!(
+        "Using {} for {NIGHTLY_TOOLCHAIN} rustc {} (LLVM {})",
+        gallery.llvm_branch,
+        rustc.release,
+        rustc.llvm_version
+    );
+
+    Ok(gallery)
+}
+
+fn build(gallery: GalleryRelease) -> Result<()> {
+    let base_dir = cache_dir(gallery);
     std::fs::create_dir_all(&base_dir)?;
     let llvm_src_dir = base_dir.join("llvm-project");
     let llvm_build_dir = base_dir.join("llvm-build");
@@ -47,7 +155,8 @@ fn build() -> Result<()> {
         } else {
             println!("============================================");
             println!(
-                "[1/2] Cloning LLVM fork into {}",
+                "[1/2] Cloning {} from the Blueshift LLVM fork into {}",
+                gallery.llvm_branch,
                 llvm_src_dir.display()
             );
             println!("============================================");
@@ -58,7 +167,7 @@ fn build() -> Result<()> {
                         "--depth",
                         GIT_DEPTH,
                         "--branch",
-                        LLVM_BRANCH,
+                        gallery.llvm_branch,
                         LLVM_REPO,
                     ])
                     .arg(&llvm_src_dir),
@@ -178,12 +287,15 @@ fn build() -> Result<()> {
     println!("============================================");
     println!("[2/2] Building the linker");
     println!("============================================");
-    build_linker(&llvm_install_dir)
+    build_linker(gallery, &llvm_install_dir)
 }
 
-fn build_linker(llvm_install_dir: &PathBuf) -> Result<()> {
+fn build_linker(
+    gallery: GalleryRelease,
+    llvm_install_dir: &PathBuf,
+) -> Result<()> {
     let project_root = project_root()?;
-    
+
     let mut cmd = Command::new("cargo");
 
     if cfg!(target_os = "macos") {
@@ -252,14 +364,57 @@ fn build_linker(llvm_install_dir: &PathBuf) -> Result<()> {
         ".",
         "--no-default-features",
         "--features",
-        "upstream-gallery-21,bpf-linker/llvm-link-static",
-        "--force"
+        &format!("{},bpf-linker/llvm-link-static", gallery.cargo_feature),
+        "--force",
     ])
     .env("LLVM_PREFIX", llvm_install_dir)
     .current_dir(&project_root);
 
     run_command(&mut cmd, "build sbpf-linker (static)")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GalleryRelease, RustcVersionInfo, parse_rustc_version_info};
+
+    #[test]
+    fn parses_rustc_version_output_for_llvm_21() {
+        let stdout = "\
+rustc 1.94.0 (4a4ef493e 2026-03-02)
+binary: rustc
+commit-hash: 4a4ef493e3a1488c6e321570238084b38948f6db
+commit-date: 2026-03-02
+host: aarch64-apple-darwin
+release: 1.94.0
+LLVM version: 21.1.8
+";
+
+        assert_eq!(
+            parse_rustc_version_info(stdout).unwrap(),
+            RustcVersionInfo {
+                release: "1.94.0".to_string(),
+                llvm_version: "21.1.8".to_string(),
+                llvm_major: 21,
+            }
+        );
+    }
+
+    #[test]
+    fn maps_llvm_21_to_gallery_21() {
+        assert_eq!(
+            GalleryRelease::from_llvm_major(21).unwrap(),
+            GalleryRelease::upstream_gallery_21()
+        );
+    }
+
+    #[test]
+    fn maps_llvm_22_to_gallery_22() {
+        assert_eq!(
+            GalleryRelease::from_llvm_major(22).unwrap(),
+            GalleryRelease::upstream_gallery_22()
+        );
+    }
 }
 
 fn run_command(cmd: &mut Command, description: &str) -> Result<()> {

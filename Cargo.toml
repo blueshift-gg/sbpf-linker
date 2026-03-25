@@ -49,3 +49,4 @@ edition = "2024"
 [features]
 default = ["bpf-linker/default"]
 upstream-gallery-21 = ["bpf-linker/llvm-21"]
+upstream-gallery-22 = ["bpf-linker/llvm-22"]
