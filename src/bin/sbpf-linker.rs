@@ -188,6 +188,10 @@ struct CommandLine {
     // The options below are for wasm-ld compatibility
     #[clap(long = "debug", hide = true)]
     _debug: bool,
+
+    // Strip lib from final object file it also redirect the artifact to target/deploy
+    #[clap(long, hide = true, num_args = 0..=1, default_missing_value = "true", default_value = "false")]
+    pub remove_lib_prefix: bool,
 }
 
 /// Returns a [`HierarchicalLayer`](tracing_tree::HierarchicalLayer) for the
@@ -230,6 +234,7 @@ fn main() -> anyhow::Result<()> {
         fatal_errors,
         _debug,
         _libs,
+        remove_lib_prefix,
     } = match Parser::try_parse_from(args) {
         Ok(command_line) => command_line,
         Err(err) => match err.kind() {
@@ -324,16 +329,25 @@ fn main() -> anyhow::Result<()> {
     let program = std::fs::read(&output).unwrap();
     let bytecode = link_program(&program)?;
 
+    // Always write to the original output path (for cargo compatibility)
+    std::fs::write(&output, &bytecode)
+        .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+
     let src_name = std::path::Path::new(&output)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("main");
-    let output_path = std::path::Path::new(&output)
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join(format!("{src_name}.so"));
-    std::fs::write(output_path, bytecode)
-        .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+
+    // Remove "lib" from the artifact and put it in target/deploy
+    if remove_lib_prefix {
+        let artifact = src_name.strip_prefix("lib").unwrap_or(src_name);
+        let deploy_path: PathBuf = "target/deploy".into();
+        std::fs::create_dir_all(&deploy_path)
+            .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+        let deploy_file = deploy_path.join(format!("{artifact}.so"));
+        std::fs::write(&deploy_file, &bytecode)
+            .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+    };
 
     Ok(())
 }
