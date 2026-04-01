@@ -190,7 +190,7 @@ struct CommandLine {
     _debug: bool,
 
     // strip lib from final object file
-    #[clap(long = "remove-lib-prefix", short ='r', hide = true, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    #[clap(hide = true, action = clap::ArgAction::SetTrue, default_value_t = false)]
     pub remove_lib_prefix: bool,
 }
 
