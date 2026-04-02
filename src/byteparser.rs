@@ -9,11 +9,23 @@ use sbpf_common::{
 
 use either::Either;
 use object::RelocationTarget::Symbol;
-use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _};
+use object::{
+    File, Object as _, ObjectSection as _, ObjectSymbol as _, SectionIndex,
+};
 
 use std::collections::HashMap;
 
 use crate::SbpfLinkerError;
+
+// Staged rodata region. We collect these before emitting so we can sort by
+// address and fill anonymous gaps before the AST is built.
+struct RodataEntry {
+    section_index: SectionIndex,
+    address: u64,
+    size: u64,
+    name: String,
+    bytes: Vec<Number>,
+}
 
 pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     let mut ast = AST::new();
@@ -35,39 +47,35 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         .sections()
         .find(|s| s.name().map(|name| name == ".text").unwrap_or(false));
 
-    let mut rodata_table = HashMap::new();
-    let mut rodata_offset = 0;
+    let mut pending_rodata: Vec<RodataEntry> = Vec::new();
+    let mut rodata_table: HashMap<(Option<SectionIndex>, u64), String> =
+        HashMap::new();
+
     for symbol in obj.symbols() {
         if let Some(ro_section) = symbol
             .section_index()
             .and_then(|section_index| ro_sections.get(&section_index))
         {
+            // STT_SECTION symbols have size == 0; anonymous gaps they cover
+            // are handled by the gap-fill pass below.
             if symbol.size() == 0 {
                 continue;
             }
-            let mut bytes = Vec::new();
-            for i in 0..symbol.size() {
-                bytes.push(Number::Int(i64::from(
-                    ro_section.data().unwrap()
-                        [(symbol.address() + i) as usize],
-                )));
-            }
-            ast.rodata_nodes.push(ASTNode::ROData {
-                rodata: ROData {
-                    name: symbol.name().unwrap().to_owned(),
-                    args: vec![
-                        Token::Directive(String::from("byte"), 0..1),
-                        Token::VectorLiteral(bytes.clone(), 0..1),
-                    ],
-                    span: 0..1,
-                },
-                offset: rodata_offset,
+            let bytes: Vec<Number> = (0..symbol.size())
+                .map(|i| {
+                    Number::Int(i64::from(
+                        ro_section.data().unwrap()
+                            [(symbol.address() + i) as usize],
+                    ))
+                })
+                .collect();
+            pending_rodata.push(RodataEntry {
+                section_index: ro_section.index(),
+                address: symbol.address(),
+                size: symbol.size(),
+                name: symbol.name().unwrap().to_owned(),
+                bytes,
             });
-            rodata_table.insert(
-                (symbol.section_index(), symbol.address()),
-                symbol.name().unwrap().to_owned(),
-            );
-            rodata_offset += symbol.size();
         } else if let Some(_) = text_section
             .iter()
             .find(|s| symbol.section_index() == Some(s.index()))
@@ -89,6 +97,81 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             }
         }
     }
+
+    // Gap-fill pass: synthesize rodata entries for byte ranges not covered by
+    // any named symbol (e.g. compiler-generated lookup tables).
+    let mut synthetic_rodata: Vec<RodataEntry> = Vec::new();
+    for (section_index, ro_section) in &ro_sections {
+        let section_data = ro_section.data().unwrap();
+        let section_size = section_data.len() as u64;
+
+        let mut section_entries: Vec<&RodataEntry> = pending_rodata
+            .iter()
+            .filter(|e| &e.section_index == section_index)
+            .collect();
+        section_entries.sort_by_key(|e| e.address);
+
+        let mut cursor = 0u64;
+        for entry in &section_entries {
+            if cursor < entry.address {
+                let gap_bytes: Vec<Number> = section_data
+                    [cursor as usize..entry.address as usize]
+                    .iter()
+                    .map(|&b| Number::Int(i64::from(b)))
+                    .collect();
+                synthetic_rodata.push(RodataEntry {
+                    section_index: *section_index,
+                    address: cursor,
+                    size: entry.address - cursor,
+                    name: format!(
+                        ".rodata.__anon_{:#x}_{:#x}",
+                        section_index.0, cursor
+                    ),
+                    bytes: gap_bytes,
+                });
+            }
+            cursor = cursor.max(entry.address + entry.size);
+        }
+
+        if cursor < section_size {
+            let gap_bytes: Vec<Number> = section_data[cursor as usize..]
+                .iter()
+                .map(|&b| Number::Int(i64::from(b)))
+                .collect();
+            synthetic_rodata.push(RodataEntry {
+                section_index: *section_index,
+                address: cursor,
+                size: section_size - cursor,
+                name: format!(
+                    ".rodata.__anon_{:#x}_{:#x}",
+                    section_index.0, cursor
+                ),
+                bytes: gap_bytes,
+            });
+        }
+    }
+
+    pending_rodata.extend(synthetic_rodata);
+    pending_rodata.sort_by_key(|e| (e.section_index.0, e.address));
+
+    let mut rodata_offset = 0u64;
+    for entry in pending_rodata {
+        ast.rodata_nodes.push(ASTNode::ROData {
+            rodata: ROData {
+                name: entry.name.clone(),
+                args: vec![
+                    Token::Directive(String::from("byte"), 0..1),
+                    Token::VectorLiteral(entry.bytes, 0..1),
+                ],
+                span: 0..1,
+            },
+            offset: rodata_offset,
+        });
+        rodata_table
+            .insert((Some(entry.section_index), entry.address), entry.name);
+        rodata_offset += entry.size;
+    }
+
     let mut debug_sections = Vec::default();
     ast.set_rodata_size(rodata_offset);
 
@@ -141,9 +224,8 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     );
                     if rodata_table.contains_key(&key) {
                         // Replace the immediate value with the rodata label
-                        let ro_label = &rodata_table[&key];
-                        let ro_label_name = ro_label.clone();
-                        node.imm = Some(Either::Left(ro_label_name));
+                        let ro_label = rodata_table[&key].clone();
+                        node.imm = Some(Either::Left(ro_label));
                     } else {
                         panic!("relocation in lddw is not in .rodata");
                     }
