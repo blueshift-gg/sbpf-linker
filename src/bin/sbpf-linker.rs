@@ -188,6 +188,10 @@ struct CommandLine {
     // The options below are for wasm-ld compatibility
     #[clap(long = "debug", hide = true)]
     _debug: bool,
+
+    // strip lib from final object file
+    #[clap(hide = true, action = clap::ArgAction::SetTrue, default_value_t = false)]
+    pub remove_lib_prefix: bool,
 }
 
 /// Returns a [`HierarchicalLayer`](tracing_tree::HierarchicalLayer) for the
@@ -230,6 +234,7 @@ fn main() -> anyhow::Result<()> {
         fatal_errors,
         _debug,
         _libs,
+        remove_lib_prefix,
     } = match Parser::try_parse_from(args) {
         Ok(command_line) => command_line,
         Err(err) => match err.kind() {
@@ -328,12 +333,23 @@ fn main() -> anyhow::Result<()> {
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("main");
-    let output_path = std::path::Path::new(&output)
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
-        .join(format!("{src_name}.so"));
-    std::fs::write(output_path, bytecode)
-        .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
 
+    let parent = std::path::Path::new(&output)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    
+    let name = if remove_lib_prefix {
+        src_name.strip_prefix("lib").unwrap_or(src_name)
+    } else {
+        src_name
+    };
+    
+    println!("DEBUG: {}",name);
+    
+    let output_path = parent.join(format!("{name}.so"));
+    
+    std::fs::write(&output_path, bytecode)
+        .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
+    
     Ok(())
 }
