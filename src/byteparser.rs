@@ -35,17 +35,10 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     // Track all .rodata* inputs, but keep AST rodata layout packed by node size.
     let mut ro_sections = HashMap::new();
     for section in obj.sections().filter(|section| {
-        section
-            .name()
-            .map(|name| name.starts_with(".rodata"))
-            .unwrap_or(false)
+        section.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
     }) {
         ro_sections.insert(section.index(), section);
     }
-
-    let text_section = obj
-        .sections()
-        .find(|s| s.name().map(|name| name == ".text").unwrap_or(false));
 
     let mut pending_rodata: Vec<RodataEntry> = Vec::new();
     let mut rodata_table: HashMap<(Option<SectionIndex>, u64), String> =
@@ -58,9 +51,14 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         {
             // STT_SECTION symbols have size == 0; anonymous gaps they cover
             // are handled by the gap-fill pass below.
-            if symbol.size() == 0 {
+            if symbol.kind() == object::SymbolKind::Section {
                 continue;
             }
+            assert!(
+                symbol.size() > 0,
+                "non-STT_SECTION rodata symbol has size 0"
+            );
+
             let bytes: Vec<Number> = (0..symbol.size())
                 .map(|i| {
                     Number::Int(i64::from(
@@ -76,21 +74,26 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 name: symbol.name().unwrap().to_owned(),
                 bytes,
             });
-        } else if let Some(_) = text_section
-            .iter()
-            .find(|s| symbol.section_index() == Some(s.index()))
+        } else if let Some(section_index) = symbol.section_index()
+            && obj
+                .section_by_index(section_index)
+                .ok()
+                .and_then(|s| s.name().ok())
+                .map(|name| name.starts_with(".text"))
+                .unwrap_or(false)
         {
+            let sym_name = symbol.name().unwrap_or("");
+            if sym_name.is_empty() {
+                continue;
+            }
             ast.nodes.push(ASTNode::Label {
-                label: Label {
-                    name: symbol.name().unwrap().to_owned(),
-                    span: 0..1,
-                },
+                label: Label { name: sym_name.to_owned(), span: 0..1 },
                 offset: symbol.address(),
             });
-            if symbol.name().unwrap() == "entrypoint" {
+            if sym_name == "entrypoint" {
                 ast.nodes.push(ASTNode::GlobalDecl {
                     global_decl: GlobalDecl {
-                        entry_label: symbol.name().unwrap().to_owned(),
+                        entry_label: sym_name.to_owned(),
                         span: 0..1,
                     },
                 });
@@ -201,7 +204,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
 
             // handle relocations
             for rel in section.relocations() {
-                // only handle relocations for symbols in the .rodata section for now
+                // handle relocations for call targets and rodata referenced by lddw
                 let symbol = match rel.1.target() {
                     Symbol(sym) => obj.symbol_by_index(sym).unwrap(),
                     _ => continue,
@@ -218,10 +221,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         _ => 0,
                     };
 
-                    let key = (
-                        symbol.section_index(),
-                        addend as u64,
-                    );
+                    let key = (symbol.section_index(), addend as u64);
                     if rodata_table.contains_key(&key) {
                         // Replace the immediate value with the rodata label
                         let ro_label = rodata_table[&key].clone();
@@ -230,9 +230,41 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                         panic!("relocation in lddw is not in .rodata");
                     }
                 } else if node.opcode == Opcode::Call {
-                    node.imm = Some(Either::Left(
-                        symbol.name().unwrap().to_owned(),
-                    ));
+                    if symbol.kind() == object::SymbolKind::Section {
+                        // STT_SECTION target: find the named symbol at
+                        // (section_index, addend) where addend is the current
+                        // raw integer immediate.
+                        let addend = match node.imm {
+                            Some(Either::Right(Number::Int(val))) => {
+                                val as u64
+                            }
+                            _ => 0,
+                        };
+                        let target_name = obj
+                            .symbols()
+                            .find(|s| {
+                                s.section_index() == symbol.section_index()
+                                    && s.address() == addend
+                                    && s.name()
+                                        .map(|n| !n.is_empty())
+                                        .unwrap_or(false)
+                            })
+                            .and_then(|s| s.name().ok())
+                            .map(|n| n.to_owned());
+
+                        if let Some(n) = target_name {
+                            node.imm = Some(Either::Left(n));
+                        }
+                        // If no named symbol found, leave the raw integer immediate
+                        // in place -- the assembler emits it as a direct offset.
+                    } else {
+                        let name = symbol.name().unwrap_or("");
+                        assert!(
+                            !name.is_empty(),
+                            "non-STT_SECTION call target has empty name"
+                        );
+                        node.imm = Some(Either::Left(name.to_owned()));
+                    }
                 }
             }
             ast.set_text_size(section.size());
