@@ -132,6 +132,7 @@ fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
     let mut out = Vec::new();
     let rodata_nodes = parse_result.data_section.get_nodes();
     let mut rodata_labels = HashMap::new();
+    let mut code_labels = HashMap::new();
     out.push(format!("rodata-count: {}", rodata_nodes.len()));
 
     for node in rodata_nodes {
@@ -146,6 +147,7 @@ fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
     for node in parse_result.code_section.get_nodes() {
         match node {
             ASTNode::Label { label, offset } => {
+                code_labels.insert(*offset as i64, label.name.clone());
                 out.push(format!("{offset:04x}: label {}", label.name));
             }
             ASTNode::Instruction {
@@ -158,6 +160,7 @@ fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
                     rodata_base,
                     rodata_len,
                     &rodata_labels,
+                    &code_labels,
                     &syscall_labels,
                 )? {
                     out.push(format!("{offset:04x}: {asm}"));
@@ -176,12 +179,23 @@ fn render_instruction(
     rodata_base: u64,
     rodata_len: u64,
     rodata_labels: &HashMap<u64, String>,
+    code_labels: &HashMap<i64, String>,
     syscall_labels: &HashMap<u64, String>,
 ) -> anyhow::Result<Vec<String>> {
     if instruction.opcode == Opcode::Call
         && let Some(label) = syscall_labels.get(&offset)
     {
         return Ok(vec![format!("call {label}")]);
+    }
+
+    if instruction.opcode == Opcode::Call
+        && let Some(Either::Right(Number::Int(value) | Number::Addr(value))) =
+            &instruction.imm
+    {
+        let target = offset as i64 + 8 + value * 8;
+        if let Some(label) = code_labels.get(&target) {
+            return Ok(vec![instruction.to_asm()?, format!("call {label}")]);
+        }
     }
 
     if instruction.opcode == Opcode::Lddw

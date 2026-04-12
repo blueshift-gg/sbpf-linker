@@ -40,6 +40,17 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         ro_sections.insert(section.index(), section);
     }
 
+    let mut text_section_bases = HashMap::new();
+    let mut text_size = 0u64;
+    for section in obj.sections().filter(|section| {
+        section
+            .name()
+            .map(|name| name.starts_with(".text"))
+            .unwrap_or(false)
+    }) {
+        text_section_bases.insert(section.index(), text_size);
+        text_size += section.size();
+    }
     let mut pending_rodata: Vec<RodataEntry> = Vec::new();
     let mut rodata_table: HashMap<(Option<SectionIndex>, u64), String> =
         HashMap::new();
@@ -75,12 +86,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 bytes,
             });
         } else if let Some(section_index) = symbol.section_index()
-            && obj
-                .section_by_index(section_index)
-                .ok()
-                .and_then(|s| s.name().ok())
-                .map(|name| name.starts_with(".text"))
-                .unwrap_or(false)
+            && let Some(section_base) = text_section_bases.get(&section_index)
         {
             let sym_name = symbol.name().unwrap_or("");
             if sym_name.is_empty() {
@@ -88,7 +94,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             }
             ast.nodes.push(ASTNode::Label {
                 label: Label { name: sym_name.to_owned(), span: 0..1 },
-                offset: symbol.address(),
+                offset: section_base + symbol.address(),
             });
             if sym_name == "entrypoint" {
                 ast.nodes.push(ASTNode::GlobalDecl {
@@ -179,7 +185,8 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     ast.set_rodata_size(rodata_offset);
 
     for section in obj.sections() {
-        if section.name() == Ok(".text") {
+        if let Some(section_base) = text_section_bases.get(&section.index()) {
+            let section_base = *section_base;
             // parse text section and build instruction nodes
             // lddw takes 16 bytes, other instructions take 8 bytes
             let mut offset = 0;
@@ -197,7 +204,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 };
                 ast.nodes.push(ASTNode::Instruction {
                     instruction: instruction.unwrap(),
-                    offset: offset as u64,
+                    offset: section_base + offset as u64,
                 });
                 offset += node_len;
             }
@@ -211,7 +218,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                 };
 
                 let node: &mut Instruction =
-                    ast.get_instruction_at_offset(rel.0).unwrap();
+                    ast.get_instruction_at_offset(section_base + rel.0).unwrap();
 
                 if node.opcode == Opcode::Lddw {
                     // addend is not explicit in the relocation entry, but implicitly
@@ -267,7 +274,6 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     }
                 }
             }
-            ast.set_text_size(section.size());
         } else if let Ok(section_name) = section.name()
             && section_name.starts_with(".debug_")
         {
@@ -279,6 +285,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             ));
         }
     }
+    ast.set_text_size(text_size);
 
     let mut parse_result = ast
         .build_program(sbpf_assembler::SbpfArch::V0)
