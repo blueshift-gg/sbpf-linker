@@ -105,9 +105,7 @@ fn detect_gallery_release() -> Result<GalleryRelease> {
         .args(["run", NIGHTLY_TOOLCHAIN, "rustc", "-vV"])
         .output()
         .with_context(|| {
-            format!(
-                "failed to run `rustup run {NIGHTLY_TOOLCHAIN} rustc -vV`"
-            )
+            format!("failed to run `rustup run {NIGHTLY_TOOLCHAIN} rustc -vV`")
         })?;
 
     if !output.status.success() {
@@ -130,9 +128,7 @@ fn detect_gallery_release() -> Result<GalleryRelease> {
 
     println!(
         "Using {} for {NIGHTLY_TOOLCHAIN} rustc {} (LLVM {})",
-        gallery.llvm_branch,
-        rustc.release,
-        rustc.llvm_version
+        gallery.llvm_branch, rustc.release, rustc.llvm_version
     );
 
     Ok(gallery)

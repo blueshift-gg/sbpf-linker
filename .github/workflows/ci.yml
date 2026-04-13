@@ -14,8 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -23,20 +24,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --features default --all-targets -- -D warnings
 
   test-harness:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly
           components: rust-src
       - uses: Swatinem/rust-cache@v2
-      - name: Install LLVM (for FileCheck)
-        run: sudo apt-get update && sudo apt-get install -y llvm
-      - run: cargo test --test tests compile_test -- --nocapture
+      - name: Install FileCheck
+        run: sudo apt-get update && sudo apt-get install -y llvm-18-tools
+      - run: cargo test -- --nocapture

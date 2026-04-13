@@ -43,10 +43,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     let mut text_section_bases = HashMap::new();
     let mut text_size = 0u64;
     for section in obj.sections().filter(|section| {
-        section
-            .name()
-            .map(|name| name.starts_with(".text"))
-            .unwrap_or(false)
+        section.name().map(|name| name.starts_with(".text")).unwrap_or(false)
     }) {
         text_section_bases.insert(section.index(), text_size);
         text_size += section.size();
@@ -217,8 +214,9 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     _ => continue,
                 };
 
-                let node: &mut Instruction =
-                    ast.get_instruction_at_offset(section_base + rel.0).unwrap();
+                let node: &mut Instruction = ast
+                    .get_instruction_at_offset(section_base + rel.0)
+                    .unwrap();
 
                 if node.opcode == Opcode::Lddw {
                     // addend is not explicit in the relocation entry, but implicitly
@@ -279,7 +277,7 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         {
             // So we have debug sections, keep them around.
             debug_sections.push(DebugSection::new(
-                section_name.into(),
+                section_name,
                 0, // will compute during emitting
                 section.data().unwrap().to_vec(),
             ));
