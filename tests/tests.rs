@@ -16,9 +16,7 @@ use sbpf_assembler::{
     parser::Token,
 };
 use sbpf_common::{
-    inst_param::Number,
-    instruction::Instruction,
-    opcode::Opcode,
+    inst_param::Number, instruction::Instruction, opcode::Opcode,
 };
 use sbpf_linker::byteparser::parse_bytecode;
 
@@ -31,9 +29,7 @@ fn rustc_cmd() -> Command {
 fn find_binary(binary_re_str: &str) -> PathBuf {
     let binary_re = regex::Regex::new(binary_re_str).unwrap();
     let mut binary = which::which_re(binary_re).expect(binary_re_str);
-    binary
-        .next()
-        .unwrap_or_else(|| panic!("could not find {binary_re_str}"))
+    binary.next().unwrap_or_else(|| panic!("could not find {binary_re_str}"))
 }
 
 fn run_mode<F>(target: &str, mode: &str, sysroot: &Path, cfg: Option<F>)
@@ -67,10 +63,12 @@ where
 }
 
 fn sbpf_dump(src: &Path, dst: &Path) {
-    let dump = render_emitted_program(src)
-        .unwrap_or_else(|err| panic!("failed to render {}: {err}", src.display()));
-    fs::write(dst, dump)
-        .unwrap_or_else(|err| panic!("failed to write {}: {err}", dst.display()));
+    let dump = render_emitted_program(src).unwrap_or_else(|err| {
+        panic!("failed to render {}: {err}", src.display())
+    });
+    fs::write(dst, dump).unwrap_or_else(|err| {
+        panic!("failed to write {}: {err}", dst.display())
+    });
 }
 
 #[test]
@@ -86,7 +84,8 @@ fn compile_test() {
     let root_dir = env::var_os("CARGO_MANIFEST_DIR")
         .expect("could not determine the root directory of the project");
     let root_dir = Path::new(&root_dir);
-    let bpf_sysroot = if let Some(bpf_sysroot) = env::var_os("BPFEL_SYSROOT_DIR")
+    let bpf_sysroot = if let Some(bpf_sysroot) =
+        env::var_os("BPFEL_SYSROOT_DIR")
     {
         PathBuf::from(bpf_sysroot)
     } else {
@@ -126,7 +125,8 @@ fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
     let syscall_labels = collect_syscall_labels(&bytes)?;
     let parse_result = parse_bytecode(&bytes)?;
     let ph_count = if parse_result.prog_is_static { 1u64 } else { 3u64 };
-    let rodata_base = parse_result.code_section.get_size() + 64 + ph_count * 56;
+    let rodata_base =
+        parse_result.code_section.get_size() + 64 + ph_count * 56;
     let rodata_len = parse_result.data_section.get_size();
 
     let mut out = Vec::new();
@@ -150,10 +150,7 @@ fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
                 code_labels.insert(*offset as i64, label.name.clone());
                 out.push(format!("{offset:04x}: label {}", label.name));
             }
-            ASTNode::Instruction {
-                instruction,
-                offset,
-            } => {
+            ASTNode::Instruction { instruction, offset } => {
                 for asm in render_instruction(
                     instruction,
                     *offset,
@@ -205,10 +202,9 @@ fn render_instruction(
         && (*value as u64) < rodata_base + rodata_len
     {
         let offset = (*value as u64) - rodata_base;
-        let dst = instruction
-            .dst
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("lddw is missing a destination register"))?;
+        let dst = instruction.dst.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("lddw is missing a destination register")
+        })?;
         let mut rendered = vec![format!("lddw r{}, rodata[{offset}]", dst.n)];
         if let Some(label) = rodata_labels.get(&offset) {
             rendered.push(format!("lddw r{}, {}", dst.n, label));
@@ -219,7 +215,9 @@ fn render_instruction(
     Ok(vec![instruction.to_asm()?])
 }
 
-fn collect_syscall_labels(bytes: &[u8]) -> anyhow::Result<HashMap<u64, String>> {
+fn collect_syscall_labels(
+    bytes: &[u8],
+) -> anyhow::Result<HashMap<u64, String>> {
     let obj = File::parse(bytes)?;
     let Some(text) = obj.section_by_name(".text") else {
         return Ok(HashMap::new());
@@ -229,8 +227,10 @@ fn collect_syscall_labels(bytes: &[u8]) -> anyhow::Result<HashMap<u64, String>> 
     let mut labels = HashMap::new();
     let mut offset = 0usize;
     while offset < data.len() {
-        let instruction = Instruction::from_bytes(&data[offset..])
-            .map_err(|err| anyhow::anyhow!("failed to decode .text at {offset:#x}: {err}"))?;
+        let instruction =
+            Instruction::from_bytes(&data[offset..]).map_err(|err| {
+                anyhow::anyhow!("failed to decode .text at {offset:#x}: {err}")
+            })?;
         if instruction.opcode == Opcode::Call
             && let Some(Either::Left(identifier)) = instruction.imm
         {
@@ -245,7 +245,8 @@ fn collect_syscall_labels(bytes: &[u8]) -> anyhow::Result<HashMap<u64, String>> 
 fn render_rodata(rodata: &ROData) -> anyhow::Result<String> {
     match (&rodata.args[0], &rodata.args[1]) {
         (Token::Directive(directive, _), Token::VectorLiteral(values, _)) => {
-            let bytes = values.iter().map(ToString::to_string).collect::<Vec<_>>();
+            let bytes =
+                values.iter().map(ToString::to_string).collect::<Vec<_>>();
             Ok(format!("{directive} {}", bytes.join(", ")))
         }
         (Token::Directive(directive, _), Token::StringLiteral(value, _)) => {
