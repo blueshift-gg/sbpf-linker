@@ -329,14 +329,17 @@ fn main() -> anyhow::Result<()> {
     let program = std::fs::read(&output).unwrap();
     let bytecode = link_program(&program)?;
 
-    // Always write to the original output path (for cargo compatibility)
-    std::fs::write(&output, &bytecode)
-        .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
-
     let src_name = std::path::Path::new(&output)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("main");
+
+    let output_path = std::path::Path::new(&output)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(format!("{src_name}.so"));
+    std::fs::write(&output_path, &bytecode)
+        .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
 
     // Remove "lib" from the artifact and put it in target/deploy
     if remove_lib_prefix {
