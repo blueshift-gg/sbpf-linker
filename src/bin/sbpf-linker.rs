@@ -234,7 +234,7 @@ fn main() -> anyhow::Result<()> {
         fatal_errors,
         _debug,
         _libs,
-        deploy: remove_lib_prefix,
+        deploy,
     } = match Parser::try_parse_from(args) {
         Ok(command_line) => command_line,
         Err(err) => match err.kind() {
@@ -342,7 +342,7 @@ fn main() -> anyhow::Result<()> {
         .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
 
     // Remove "lib" from the artifact and put it in target/deploy
-    if remove_lib_prefix && output_path.exists() {
+    if deploy && output_path.exists() {
         let final_object = src_name.strip_prefix("lib").unwrap_or(src_name);
         let deploy_path = PathBuf::from("target").join("deploy");
         std::fs::create_dir_all(&deploy_path).map_err(|e| {
@@ -350,12 +350,14 @@ fn main() -> anyhow::Result<()> {
                 msg: format!("failed to create deploy directory: {e}"),
             }
         })?;
-        let deploy_file = deploy_path.join(format!("{final_object}.so"));
-        std::fs::write(&deploy_file, &bytecode).map_err(|e| {
-            CliError::ProgramWriteError {
-                msg: format!("failed to write deploy artifact: {e}"),
-            }
-        })?;
+        if deploy_path.exists() {
+            let deploy_file = deploy_path.join(format!("{final_object}.so"));
+            std::fs::write(&deploy_file, &bytecode).map_err(|e| {
+                CliError::ProgramWriteError {
+                    msg: format!("failed to write deploy artifact: {e}"),
+                }
+            })?;
+        }
     }
 
     Ok(())
