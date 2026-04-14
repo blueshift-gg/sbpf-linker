@@ -185,13 +185,13 @@ struct CommandLine {
     #[clap(long, action = clap::ArgAction::Set, default_value_t = true)]
     fatal_errors: bool,
 
-    // The options below are for wasm-ld compatibility
+    /// The options below are for wasm-ld compatibility
     #[clap(long = "debug", hide = true)]
     _debug: bool,
 
-    // Strip lib from final object file it also redirect the artifact to target/deploy
-    #[clap(long, hide = true, num_args = 0..=1, default_missing_value = "true", default_value = "false")]
-    pub remove_lib_prefix: bool,
+    /// Strips the `lib` prefix from the output file and places it in the `target/deploy` directory for deployment
+    #[clap(long, hide = true, default_value_t = false)]
+    pub deploy: bool,
 }
 
 /// Returns a [`HierarchicalLayer`](tracing_tree::HierarchicalLayer) for the
@@ -234,7 +234,7 @@ fn main() -> anyhow::Result<()> {
         fatal_errors,
         _debug,
         _libs,
-        remove_lib_prefix,
+        deploy: remove_lib_prefix,
     } = match Parser::try_parse_from(args) {
         Ok(command_line) => command_line,
         Err(err) => match err.kind() {
@@ -342,15 +342,17 @@ fn main() -> anyhow::Result<()> {
         .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
 
     // Remove "lib" from the artifact and put it in target/deploy
-    if remove_lib_prefix {
-        let artifact = src_name.strip_prefix("lib").unwrap_or(src_name);
-        let deploy_path: PathBuf = "target/deploy".into();
-        std::fs::create_dir_all(&deploy_path)
-            .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
-        let deploy_file = deploy_path.join(format!("{artifact}.so"));
-        std::fs::write(&deploy_file, &bytecode)
-            .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
-    };
+    if remove_lib_prefix && output_path.exists() {
+          let final_object = src_name.strip_prefix("lib").unwrap_or(src_name);
+          let deploy_path = PathBuf::from("target").join("deploy");
+          std::fs::create_dir_all(&deploy_path).map_err(|e| {
+              CliError::ProgramWriteError { msg: format!("failed to create deploy directory: {e}") }
+          })?;
+          let deploy_file = deploy_path.join(format!("{final_object}.so"));
+          std::fs::write(&deploy_file, &bytecode).map_err(|e| {
+              CliError::ProgramWriteError { msg: format!("failed to write deploy artifact: {e}") }
+          })?;
+      }
 
     Ok(())
 }
