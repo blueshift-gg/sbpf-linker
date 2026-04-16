@@ -96,12 +96,13 @@ struct CommandLine {
     target: Option<CString>,
 
     /// Target BPF processor. Can be one of `generic`, `probe`, `v1`, `v2`, `v3`
-    #[clap(long, default_value = "generic")]
+    #[clap(long, default_value = "v2")]
     cpu: Cpu,
 
-    /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris. Use
-    /// +feature to enable a feature, or -feature to disable it.  For example
-    /// --cpu-features=+alu32,-dwarfris
+    /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris.
+    /// LLVM 22 builds also support allows-misaligned-mem-access. Use +feature to enable a
+    /// feature, or -feature to disable it. For example
+    /// --cpu-features=+allows-misaligned-mem-access,+alu32,-dwarfris
     #[clap(long, value_name = "features", default_value = "")]
     cpu_features: CString,
 
@@ -164,7 +165,7 @@ struct CommandLine {
     llvm_args: Vec<CString>,
 
     /// Disable passing --bpf-expand-memcpy-in-order to LLVM.
-    #[clap(long)]
+    #[clap(long, default_value_t = true, hide = true)]
     disable_expand_memcpy_in_order: bool,
 
     /// Disable exporting memcpy, memmove, memset, memcmp and bcmp. Exporting
@@ -190,8 +191,8 @@ struct CommandLine {
     _debug: bool,
 
     /// Strips the `lib` prefix from the output file and places it in the `target/deploy` directory for deployment
-    #[clap(long, hide = true, default_value_t = false)]
-    pub deploy: bool,
+    #[clap(long, hide = true, default_value_t = true)]
+    deploy: bool,
 }
 
 /// Returns a [`HierarchicalLayer`](tracing_tree::HierarchicalLayer) for the
@@ -206,47 +207,102 @@ where
         .with_writer(writer)
 }
 
+fn process_cli_options<I>(args: I) -> anyhow::Result<CommandLine>
+where
+    I: Iterator<Item = String>,
+{
+    let cli: CommandLine = match Parser::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(err) => match err.kind() {
+            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                print!("{err}");
+                return Err(err.into());
+            }
+            _ => return Err(err.into()),
+        },
+    };
+    let mut cpu_features = cli.cpu_features;
+
+    let misalignment_bytes = b"+allows-misaligned-mem-access";
+    if !cpu_features
+        .as_bytes()
+        .windows(misalignment_bytes.len())
+        .any(|w| w == misalignment_bytes)
+    {
+        let mut bytes = cpu_features.into_bytes();
+        if !bytes.is_empty() {
+            bytes.push(b',');
+        }
+        bytes.extend_from_slice(misalignment_bytes);
+        cpu_features = CString::new(bytes).unwrap();
+    }
+
+    let mut llvm_args = cli.llvm_args.clone();
+    let has_stack_size = llvm_args
+        .iter()
+        .any(|arg| arg.as_bytes().starts_with(b"-bpf-stack-size"));
+
+    if !has_stack_size {
+        llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
+    }
+
+    Ok(CommandLine {
+        target: cli.target,
+        cpu: cli.cpu,
+        cpu_features,
+        output: cli.output,
+        emit: cli.emit,
+        btf: cli.btf,
+        allow_bpf_trap: cli.allow_bpf_trap,
+        _libs: cli._libs,
+        optimize: cli.optimize,
+        export_symbols: cli.export_symbols,
+        log_file: cli.log_file,
+        log_level: cli.log_level,
+        unroll_loops: cli.unroll_loops,
+        ignore_inline_never: cli.ignore_inline_never,
+        dump_module: cli.dump_module,
+        llvm_args,
+        disable_expand_memcpy_in_order: cli.disable_expand_memcpy_in_order,
+        disable_memory_builtins: cli.disable_memory_builtins,
+        inputs: cli.inputs,
+        export: cli.export,
+        fatal_errors: cli.fatal_errors,
+        _debug: cli._debug,
+        deploy: cli.deploy,
+    })
+}
+
 fn main() -> anyhow::Result<()> {
     let args = env::args().map(|arg| {
         if arg == "-flavor" { "--flavor".to_string() } else { arg }
     });
 
+    let cli = process_cli_options(args)?;
+
     let CommandLine {
-        target,
         cpu,
         cpu_features,
+        target,
         output,
-        emit,
         btf,
         allow_bpf_trap,
-        optimize,
         export_symbols,
         log_file,
         log_level,
+        llvm_args,
         unroll_loops,
         ignore_inline_never,
         dump_module,
-        llvm_args,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
         inputs,
         export,
         fatal_errors,
-        _debug,
-        _libs,
         deploy,
-    } = match Parser::try_parse_from(args) {
-        Ok(command_line) => command_line,
-        Err(err) => match err.kind() {
-            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
-                print!("{err}");
-                return Ok(());
-            }
-            _ => return Err(err.into()),
-        },
-    };
+        ..
+    } = cli;
 
-    // Configure tracing.
     let _guard = {
         let filter = EnvFilter::from_default_env();
         let filter = match log_level {
@@ -285,13 +341,13 @@ fn main() -> anyhow::Result<()> {
         .flat_map(str::lines)
         .chain(export.iter().map(String::as_str));
 
-    let output_type = match *emit.as_slice() {
+    let output_type = match *cli.emit.as_slice() {
         [] => unreachable!("emit has a default value"),
         [CliOutputType(output_type), ..] => output_type,
     };
 
-    let optimize = match *optimize.as_slice() {
-        [] => unreachable!("emit has a default value"),
+    let optimize = match *cli.optimize.as_slice() {
+        [] => unreachable!("optimize has a default value"),
         [.., CliOptLevel(optimize)] => optimize,
     };
 
@@ -359,4 +415,58 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_export_input_args() {
+        let args = [
+            "bpf-linker",
+            "--export",
+            "foo",
+            "--export",
+            "bar",
+            "symbols.o", // this should be parsed as `input`, not `export`
+            "rcgu.o",    // this should be parsed as `input`, not `export`
+            "-L",
+            "target/debug/deps",
+            "-L",
+            "target/debug",
+            "-L",
+            "/home/foo/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib",
+            "-o",
+            "/tmp/bin.s",
+            "--target=bpf",
+            "--emit=asm",
+            ].into_iter().map(|s|s.to_string());
+        let CommandLine {
+            cpu,
+            inputs,
+            export,
+            disable_expand_memcpy_in_order,
+            deploy,
+            cpu_features,
+            llvm_args,
+            ..
+        } = process_cli_options(args).unwrap();
+        assert_eq!(export, ["foo", "bar"]);
+        assert_eq!(
+            inputs,
+            [PathBuf::from("symbols.o"), PathBuf::from("rcgu.o")]
+        );
+
+        assert!(matches!(cpu, Cpu::V2));
+        assert!(disable_expand_memcpy_in_order);
+        assert!(deploy);
+
+        assert_eq!(cpu_features.to_bytes(), b"+allows-misaligned-mem-access");
+        assert!(
+            llvm_args
+                .iter()
+                .any(|a| a.to_str().unwrap() == "-bpf-stack-size=4096")
+        );
+    }
 }
