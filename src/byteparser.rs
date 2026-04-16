@@ -32,10 +32,17 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
 
     let obj = File::parse(bytes)?;
 
-    // Track all .rodata* inputs, but keep AST rodata layout packed by node size.
+    // Track all read-only sections including .rodata* and .data.rel.ro* sections.
+    // .data.rel.ro* is read-only after load-time pointer patching and can be
+    // an lddw relocation target just like .rodata*.
     let mut ro_sections = HashMap::new();
     for section in obj.sections().filter(|section| {
-        section.name().map(|name| name.starts_with(".rodata")).unwrap_or(false)
+        section
+            .name()
+            .map(|name| {
+                name.starts_with(".rodata") || name.starts_with(".data.rel.ro")
+            })
+            .unwrap_or(false)
     }) {
         ro_sections.insert(section.index(), section);
     }
