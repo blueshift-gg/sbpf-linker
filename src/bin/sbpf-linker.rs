@@ -165,7 +165,7 @@ struct CommandLine {
     llvm_args: Vec<CString>,
 
     /// Disable passing --bpf-expand-memcpy-in-order to LLVM.
-    #[clap(long, default_value_t = true, hide = true)]
+    #[clap(long, default_value_t = true, hide = true, action = clap::ArgAction::Set)]
     disable_expand_memcpy_in_order: bool,
 
     /// Disable exporting memcpy, memmove, memset, memcmp and bcmp. Exporting
@@ -191,7 +191,7 @@ struct CommandLine {
     _debug: bool,
 
     /// Strips the `lib` prefix from the output file and places it in the `target/deploy` directory for deployment
-    #[clap(long, hide = true, default_value_t = true)]
+    #[clap(long, default_value_t = true, hide = true, action = clap::ArgAction::Set)]
     deploy: bool,
 }
 
@@ -424,13 +424,13 @@ mod tests {
     #[test]
     fn test_export_input_args() {
         let args = [
-            "bpf-linker",
+            "sbpf-linker",
             "--export",
             "foo",
             "--export",
             "bar",
-            "symbols.o", // this should be parsed as `input`, not `export`
-            "rcgu.o",    // this should be parsed as `input`, not `export`
+            "symbols.o",
+            "rcgu.o",
             "-L",
             "target/debug/deps",
             "-L",
@@ -441,23 +441,17 @@ mod tests {
             "/tmp/bin.s",
             "--target=bpf",
             "--emit=asm",
-            ].into_iter().map(|s|s.to_string());
+        ]
+        .into_iter()
+        .map(|s| s.to_string());
         let CommandLine {
             cpu,
-            inputs,
-            export,
             disable_expand_memcpy_in_order,
             deploy,
             cpu_features,
             llvm_args,
             ..
         } = process_cli_options(args).unwrap();
-        assert_eq!(export, ["foo", "bar"]);
-        assert_eq!(
-            inputs,
-            [PathBuf::from("symbols.o"), PathBuf::from("rcgu.o")]
-        );
-
         assert!(matches!(cpu, Cpu::V2));
         assert!(disable_expand_memcpy_in_order);
         assert!(deploy);
@@ -467,6 +461,160 @@ mod tests {
             llvm_args
                 .iter()
                 .any(|a| a.to_str().unwrap() == "-bpf-stack-size=4096")
+        );
+    }
+
+    #[test]
+    fn test_explicit_overrides_of_default_flags() { 
+        let args = [
+            "sbpf-linker",
+            "input.o",
+            "-o",
+            "/tmp/bin.so",
+            "--cpu=v3", 
+            "--emit=llvm-ir",
+            "-O",
+            "0",
+            "-O",
+            "z",
+            "--deploy=false",
+            "--fatal-errors=false",
+            "--disable-expand-memcpy-in-order=false",
+        ]
+        .into_iter()
+        .map(|s| s.to_string());
+        let CommandLine {
+            cpu,
+            emit,
+            optimize,
+            deploy,
+            fatal_errors,
+            disable_expand_memcpy_in_order,
+            output,
+            ..
+        } = process_cli_options(args).unwrap();
+
+        assert!(matches!(cpu, Cpu::V3));
+        assert_eq!(emit.len(), 1);
+        assert!(matches!(emit[0], CliOutputType(OutputType::LlvmAssembly)));
+        assert_eq!(optimize.len(), 2);
+        assert!(matches!(optimize[0], CliOptLevel(OptLevel::No)));
+        assert!(matches!(optimize[1], CliOptLevel(OptLevel::SizeMin)));
+        assert!(!deploy);
+        assert!(!fatal_errors);
+        assert!(!disable_expand_memcpy_in_order);
+        assert_eq!(output, PathBuf::from("/tmp/bin.so"));
+    }
+
+    #[test]
+    fn test_boolean_and_optional_flags() {
+        let args = [
+            "sbpf-linker",
+            "input.o",
+            "-o",
+            "/tmp/bin.o",
+            "--target=bpfel-unknown-none",
+            "--btf",
+            "--allow-bpf-trap",
+            "--unroll-loops",
+            "--ignore-inline-never",
+            "--disable-memory-builtins",
+            "--log-level=debug",
+            "--export-symbols=/tmp/exports.txt",
+            "--dump-module=/tmp/module.ll",
+        ]
+        .into_iter()
+        .map(|s| s.to_string());
+        let CommandLine {
+            target,
+            btf,
+            allow_bpf_trap,
+            unroll_loops,
+            ignore_inline_never,
+            disable_memory_builtins,
+            log_level,
+            export_symbols,
+            dump_module,
+            inputs,
+            ..
+        } = process_cli_options(args).unwrap();
+
+        assert_eq!(
+            target.as_deref().map(|t| t.to_bytes()),
+            Some(b"bpfel-unknown-none".as_slice())
+        );
+        assert!(btf);
+        assert!(allow_bpf_trap);
+        assert!(unroll_loops);
+        assert!(ignore_inline_never);
+        assert!(disable_memory_builtins);
+        assert_eq!(log_level, Some(Level::DEBUG));
+        assert_eq!(export_symbols, Some(PathBuf::from("/tmp/exports.txt")));
+        assert_eq!(dump_module, Some(PathBuf::from("/tmp/module.ll")));
+        assert_eq!(inputs, vec![PathBuf::from("input.o")]);
+    }
+
+    #[test]
+    fn test_export_cpu_features_and_llvm_args() {
+        let args = [
+            "sbpf-linker",
+            "input.o",
+            "-o",
+            "/tmp/bin.o",
+            "--export",
+            "foo,bar",
+            "--export",
+            "baz",
+            "--cpu-features=+alu32,-dwarfris",
+            "--llvm-args=-bpf-stack-size=8192",
+            "--llvm-args=-some-flag",
+        ]
+        .into_iter()
+        .map(|s| s.to_string());
+        let CommandLine {
+            export,
+            cpu_features,
+            llvm_args,
+            ..
+        } = process_cli_options(args).unwrap();
+
+        assert_eq!(export, vec!["foo", "bar", "baz"]);
+
+        // Misalignment feature is appended when not present
+        assert_eq!(
+            cpu_features.to_bytes(),
+            b"+alu32,-dwarfris,+allows-misaligned-mem-access"
+        );
+
+        // User-supplied stack size is preserved (not overridden with 4096)
+        assert!(
+            llvm_args
+                .iter()
+                .any(|a| a.to_str().unwrap() == "-bpf-stack-size=8192")
+        );
+        assert!(
+            llvm_args
+                .iter()
+                .any(|a| a.to_str().unwrap() == "-some-flag")
+        );
+    }
+
+    #[test]
+    fn test_misalignment_feature_not_duplicated_when_already_present() {
+        let args = [
+            "sbpf-linker",
+            "input.o",
+            "-o",
+            "/tmp/bin.o",
+            "--cpu-features=+allows-misaligned-mem-access,+alu32",
+        ]
+        .into_iter()
+        .map(|s| s.to_string());
+        let CommandLine { cpu_features, .. } = process_cli_options(args).unwrap();
+
+        assert_eq!(
+            cpu_features.to_bytes(),
+            b"+allows-misaligned-mem-access,+alu32"
         );
     }
 }

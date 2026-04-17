@@ -1,6 +1,6 @@
 // assembly-output: ptx-linker
 // revisions: inline_small helper_large
-// compile-flags: --crate-type bin -C opt-level=3 -C panic=abort -C relocation-model=static -C target-feature=+allows-misaligned-mem-access -C link-arg=--disable-memory-builtins -C link-arg=--disable-expand-memcpy-in-order --cfg feature="mem_unaligned"
+// compile-flags: --crate-type bin -C opt-level=3 -C panic=abort -C relocation-model=static -C target-feature=+allows-misaligned-mem-access -C link-arg=--disable-memory-builtins -C link-arg=--disable-expand-memcpy-in-order=true --cfg feature="mem_unaligned"
 
 // Example assembly fixture.
 //
