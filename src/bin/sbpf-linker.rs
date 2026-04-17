@@ -465,13 +465,13 @@ mod tests {
     }
 
     #[test]
-    fn test_explicit_overrides_of_default_flags() { 
+    fn test_explicit_overrides_of_default_flags() {
         let args = [
             "sbpf-linker",
             "input.o",
             "-o",
             "/tmp/bin.so",
-            "--cpu=v3", 
+            "--cpu=v3",
             "--emit=llvm-ir",
             "-O",
             "0",
@@ -571,12 +571,8 @@ mod tests {
         ]
         .into_iter()
         .map(|s| s.to_string());
-        let CommandLine {
-            export,
-            cpu_features,
-            llvm_args,
-            ..
-        } = process_cli_options(args).unwrap();
+        let CommandLine { export, cpu_features, llvm_args, .. } =
+            process_cli_options(args).unwrap();
 
         assert_eq!(export, vec!["foo", "bar", "baz"]);
 
@@ -592,11 +588,7 @@ mod tests {
                 .iter()
                 .any(|a| a.to_str().unwrap() == "-bpf-stack-size=8192")
         );
-        assert!(
-            llvm_args
-                .iter()
-                .any(|a| a.to_str().unwrap() == "-some-flag")
-        );
+        assert!(llvm_args.iter().any(|a| a.to_str().unwrap() == "-some-flag"));
     }
 
     #[test]
@@ -610,7 +602,8 @@ mod tests {
         ]
         .into_iter()
         .map(|s| s.to_string());
-        let CommandLine { cpu_features, .. } = process_cli_options(args).unwrap();
+        let CommandLine { cpu_features, .. } =
+            process_cli_options(args).unwrap();
 
         assert_eq!(
             cpu_features.to_bytes(),
