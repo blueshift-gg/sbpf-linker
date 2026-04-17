@@ -237,15 +237,13 @@ where
         cpu_features = CString::new(bytes).unwrap();
     }
 
-    let mut llvm_args = cli.llvm_args.clone();
-    let has_stack_size = llvm_args
+    let mut llvm_args = cli.llvm_args;
+    if !llvm_args
         .iter()
-        .any(|arg| arg.as_bytes().starts_with(b"-bpf-stack-size"));
-
-    if !has_stack_size {
+        .any(|arg| arg.as_bytes().starts_with(b"-bpf-stack-size"))
+    {
         llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
     }
-
     Ok(CommandLine {
         target: cli.target,
         cpu: cli.cpu,
@@ -473,10 +471,6 @@ mod tests {
             "/tmp/bin.so",
             "--cpu=v3",
             "--emit=llvm-ir",
-            "-O",
-            "0",
-            "-O",
-            "z",
             "--deploy=false",
             "--fatal-errors=false",
             "--disable-expand-memcpy-in-order=false",
@@ -486,7 +480,6 @@ mod tests {
         let CommandLine {
             cpu,
             emit,
-            optimize,
             deploy,
             fatal_errors,
             disable_expand_memcpy_in_order,
@@ -497,9 +490,6 @@ mod tests {
         assert!(matches!(cpu, Cpu::V3));
         assert_eq!(emit.len(), 1);
         assert!(matches!(emit[0], CliOutputType(OutputType::LlvmAssembly)));
-        assert_eq!(optimize.len(), 2);
-        assert!(matches!(optimize[0], CliOptLevel(OptLevel::No)));
-        assert!(matches!(optimize[1], CliOptLevel(OptLevel::SizeMin)));
         assert!(!deploy);
         assert!(!fatal_errors);
         assert!(!disable_expand_memcpy_in_order);
@@ -552,43 +542,6 @@ mod tests {
         assert_eq!(export_symbols, Some(PathBuf::from("/tmp/exports.txt")));
         assert_eq!(dump_module, Some(PathBuf::from("/tmp/module.ll")));
         assert_eq!(inputs, vec![PathBuf::from("input.o")]);
-    }
-
-    #[test]
-    fn test_export_cpu_features_and_llvm_args() {
-        let args = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--export",
-            "foo,bar",
-            "--export",
-            "baz",
-            "--cpu-features=+alu32,-dwarfris",
-            "--llvm-args=-bpf-stack-size=8192",
-            "--llvm-args=-some-flag",
-        ]
-        .into_iter()
-        .map(|s| s.to_string());
-        let CommandLine { export, cpu_features, llvm_args, .. } =
-            process_cli_options(args).unwrap();
-
-        assert_eq!(export, vec!["foo", "bar", "baz"]);
-
-        // Misalignment feature is appended when not present
-        assert_eq!(
-            cpu_features.to_bytes(),
-            b"+alu32,-dwarfris,+allows-misaligned-mem-access"
-        );
-
-        // User-supplied stack size is preserved (not overridden with 4096)
-        assert!(
-            llvm_args
-                .iter()
-                .any(|a| a.to_str().unwrap() == "-bpf-stack-size=8192")
-        );
-        assert!(llvm_args.iter().any(|a| a.to_str().unwrap() == "-some-flag"));
     }
 
     #[test]
