@@ -233,7 +233,7 @@ where
         if !bytes.is_empty() {
             bytes.push(b',');
         }
-        
+
         bytes.extend_from_slice(b"+allows-misaligned-mem-access");
         cpu_features = CString::new(bytes).unwrap();
     }
