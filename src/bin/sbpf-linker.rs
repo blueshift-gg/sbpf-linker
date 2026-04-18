@@ -223,7 +223,7 @@ where
     };
     let mut cpu_features = cli.cpu_features;
 
-    let misalignment_bytes = b"+allows-misaligned-mem-access";
+    let misalignment_bytes = b"allows-misaligned-mem-access";
     if !cpu_features
         .as_bytes()
         .windows(misalignment_bytes.len())
@@ -233,7 +233,8 @@ where
         if !bytes.is_empty() {
             bytes.push(b',');
         }
-        bytes.extend_from_slice(misalignment_bytes);
+        
+        bytes.extend_from_slice(b"+allows-misaligned-mem-access");
         cpu_features = CString::new(bytes).unwrap();
     }
 
@@ -551,7 +552,7 @@ mod tests {
             "input.o",
             "-o",
             "/tmp/bin.o",
-            "--cpu-features=+allows-misaligned-mem-access,+alu32",
+            "--cpu-features=-allows-misaligned-mem-access,+alu32",
         ]
         .into_iter()
         .map(|s| s.to_string());
@@ -560,7 +561,7 @@ mod tests {
 
         assert_eq!(
             cpu_features.to_bytes(),
-            b"+allows-misaligned-mem-access,+alu32"
+            b"-allows-misaligned-mem-access,+alu32"
         );
     }
 }
