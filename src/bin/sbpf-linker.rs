@@ -99,6 +99,10 @@ struct CommandLine {
     #[clap(long, default_value = "v2")]
     cpu: Cpu,
 
+    /// Override the target-cpu attribute to expose the desired CPU features to bpf-linker
+    #[clap(long)]
+    override_cpu_flag: Option<Cpu>,
+
     /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris.
     /// LLVM 22 builds also support allows-misaligned-mem-access. Use +feature to enable a
     /// feature, or -feature to disable it. For example
@@ -245,9 +249,13 @@ where
     {
         llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
     }
+
+    let cpu = cli.override_cpu_flag.unwrap_or(Cpu::V2);
+
     Ok(CommandLine {
         target: cli.target,
-        cpu: cli.cpu,
+        override_cpu_flag: cli.override_cpu_flag,
+        cpu,
         cpu_features,
         output: cli.output,
         emit: cli.emit,
