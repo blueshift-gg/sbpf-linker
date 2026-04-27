@@ -478,7 +478,7 @@ mod tests {
             "input.o",
             "-o",
             "/tmp/bin.so",
-            "--cpu=v3",
+            "--override-cpu-flag=v3",
             "--emit=llvm-ir",
             "--deploy=false",
             "--fatal-errors=false",
