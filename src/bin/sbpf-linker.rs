@@ -96,8 +96,14 @@ struct CommandLine {
     target: Option<CString>,
 
     /// Target BPF processor. Can be one of `generic`, `probe`, `v1`, `v2`, `v3`
-    #[clap(long, default_value = "v2")]
+    /// This will be ignored in sbpf linker since we want to default `cpu` to `v2` but with rustc always passing a `cpu` value
+    /// We decide to add one more flag to override it
+    #[clap(long, default_value = "generic")]
     cpu: Cpu,
+
+    /// Override the target-cpu attribute to expose the desired CPU features to bpf-linker
+    #[clap(long, default_value = "v2")]
+    override_cpu_flag: Option<Cpu>,
 
     /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris.
     /// LLVM 22 builds also support allows-misaligned-mem-access. Use +feature to enable a
@@ -245,9 +251,13 @@ where
     {
         llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
     }
+
+    let cpu = cli.override_cpu_flag.unwrap();
+
     Ok(CommandLine {
         target: cli.target,
-        cpu: cli.cpu,
+        override_cpu_flag: cli.override_cpu_flag,
+        cpu,
         cpu_features,
         output: cli.output,
         emit: cli.emit,
@@ -470,7 +480,7 @@ mod tests {
             "input.o",
             "-o",
             "/tmp/bin.so",
-            "--cpu=v3",
+            "--override-cpu-flag=v3",
             "--emit=llvm-ir",
             "--deploy=false",
             "--fatal-errors=false",
@@ -508,6 +518,7 @@ mod tests {
             "--btf",
             "--allow-bpf-trap",
             "--unroll-loops",
+            "--override-cpu-flag=v1",
             "--ignore-inline-never",
             "--disable-memory-builtins",
             "--log-level=debug",
@@ -517,6 +528,7 @@ mod tests {
         .into_iter()
         .map(|s| s.to_string());
         let CommandLine {
+            cpu,
             target,
             btf,
             allow_bpf_trap,
@@ -537,6 +549,7 @@ mod tests {
         assert!(btf);
         assert!(allow_bpf_trap);
         assert!(unroll_loops);
+        assert!(matches!(cpu, Cpu::V1));
         assert!(ignore_inline_never);
         assert!(disable_memory_builtins);
         assert_eq!(log_level, Some(Level::DEBUG));
@@ -563,5 +576,30 @@ mod tests {
             cpu_features.to_bytes(),
             b"-allows-misaligned-mem-access,+alu32"
         );
+    }
+
+    #[test]
+    fn test_override_cpu() {
+        let args = [
+            "sbpf-linker",
+            "input.o",
+            "-o",
+            "/tmp/bin.o",
+            "--cpu=v1",
+            "--override-cpu-flag=v3",
+        ]
+        .into_iter()
+        .map(|s| s.to_string());
+        let CommandLine { cpu, .. } = process_cli_options(args).unwrap();
+        assert!(matches!(cpu, Cpu::V3));
+    }
+
+    #[test]
+    fn test_cpu_flag_is_ignored_without_override() {
+        let args = ["sbpf-linker", "input.o", "-o", "/tmp/bin.o", "--cpu=v3"]
+            .into_iter()
+            .map(|s| s.to_string());
+        let CommandLine { cpu, .. } = process_cli_options(args).unwrap();
+        assert!(matches!(cpu, Cpu::V2));
     }
 }
