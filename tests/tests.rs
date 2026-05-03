@@ -16,7 +16,9 @@ use sbpf_assembler::{
     parser::Token,
 };
 use sbpf_common::{
-    inst_param::Number, instruction::{AsmFormat, Instruction}, opcode::Opcode,
+    inst_param::Number,
+    instruction::{AsmFormat, Instruction},
+    opcode::Opcode,
 };
 use sbpf_linker::byteparser::parse_bytecode;
 
@@ -191,7 +193,10 @@ fn render_instruction(
     {
         let target = offset as i64 + 8 + value * 8;
         if let Some(label) = code_labels.get(&target) {
-            return Ok(vec![instruction.to_asm(AsmFormat::Default)?, format!("call {label}")]);
+            return Ok(vec![
+                instruction.to_asm(AsmFormat::Default)?,
+                format!("call {label}"),
+            ]);
         }
     }
 
