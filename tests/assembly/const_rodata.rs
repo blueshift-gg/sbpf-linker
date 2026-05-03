@@ -81,7 +81,7 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,borrow_const_direct: rodata[0]: byte 17, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_const_direct: label borrow_const_direct
 // CHECK,borrow_const_direct: lddw r1, rodata[0]
-// CHECK,borrow_const_direct: ldxb r0, [r1+0]
+// CHECK,borrow_const_direct: ldxb r0, [r1+0x0]
 // CHECK,borrow_const_direct: exit
 
 // CHECK,borrow_const_match: rodata-count: 2
@@ -89,16 +89,16 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,borrow_const_match: rodata[8]: byte 34, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_const_match: label borrow_const_match
 // CHECK,borrow_const_match: lddw r2, rodata[0]
-// CHECK,borrow_const_match: jeq r1, 0, +2
+// CHECK,borrow_const_match: jeq r1, 0x0, +0x2
 // CHECK,borrow_const_match: lddw r2, rodata[8]
-// CHECK,borrow_const_match: ldxb r0, [r2+0]
+// CHECK,borrow_const_match: ldxb r0, [r2+0x0]
 // CHECK,borrow_const_match: exit
 
 // CHECK,borrow_static_direct: rodata-count: 1
 // CHECK,borrow_static_direct: rodata[0]: byte 51, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_static_direct: label borrow_static_direct
 // CHECK,borrow_static_direct: lddw r1, rodata[0]
-// CHECK,borrow_static_direct: ldxb r0, [r1+0]
+// CHECK,borrow_static_direct: ldxb r0, [r1+0x0]
 // CHECK,borrow_static_direct: exit
 
 // CHECK,borrow_static_match: rodata-count: 2
@@ -106,19 +106,19 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,borrow_static_match: rodata[8]: byte 68, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_static_match: label borrow_static_match
 // CHECK,borrow_static_match: lddw r2, rodata[0]
-// CHECK,borrow_static_match: jeq r1, 0, +2
+// CHECK,borrow_static_match: jeq r1, 0x0, +0x2
 // CHECK,borrow_static_match: lddw r2, rodata[8]
-// CHECK,borrow_static_match: ldxb r0, [r2+0]
+// CHECK,borrow_static_match: ldxb r0, [r2+0x0]
 // CHECK,borrow_static_match: exit
 
 // CHECK,by_value_const_match: rodata-count: 0
 // CHECK,by_value_const_match: label by_value_const_match
-// CHECK,by_value_const_match: mov64 r2, 17
-// CHECK,by_value_const_match: jeq r1, 0, +1
-// CHECK,by_value_const_match: mov64 r2, 34
+// CHECK,by_value_const_match: mov64 r2, 0x11
+// CHECK,by_value_const_match: jeq r1, 0x0, +0x1
+// CHECK,by_value_const_match: mov64 r2, 0x22
 // CHECK,by_value_const_match-NOT: lddw
-// CHECK,by_value_const_match: stxb [r10-1], r2
-// CHECK,by_value_const_match: ldxb r0, [r10-1]
+// CHECK,by_value_const_match: stxb [r10-0x1], r2
+// CHECK,by_value_const_match: ldxb r0, [r10-0x1]
 // CHECK,by_value_const_match: exit
 
 // CHECK,mixed_match: rodata-count: 2
@@ -126,7 +126,7 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,mixed_match: rodata[8]: byte 34, 1, 2, 3, 4, 5, 6, 7
 // CHECK,mixed_match: label mixed_match
 // CHECK,mixed_match: lddw r2, rodata[0]
-// CHECK,mixed_match: jeq r1, 0, +2
+// CHECK,mixed_match: jeq r1, 0x0, +0x2
 // CHECK,mixed_match: lddw r2, rodata[8]
-// CHECK,mixed_match: ldxb r0, [r2+0]
+// CHECK,mixed_match: ldxb r0, [r2+0x0]
 // CHECK,mixed_match: exit

@@ -115,16 +115,16 @@ pub fn entrypoint(input: *mut u8) -> u64 {
 
 // CHECK,inline_small: rodata-count: 0
 // CHECK,inline_small: label entrypoint
-// CHECK,inline_small: ldxdw r3, [r1+16]
-// CHECK,inline_small: ldxdw r3, [r1+24]
-// CHECK,inline_small: ldxdw r3, [r1+32]
-// CHECK,inline_small: ldxdw r1, [r1+40]
+// CHECK,inline_small: ldxdw r3, [r1+0x10]
+// CHECK,inline_small: ldxdw r3, [r1+0x18]
+// CHECK,inline_small: ldxdw r3, [r1+0x20]
+// CHECK,inline_small: ldxdw r1, [r1+0x28]
 
 // CHECK,helper_large: rodata-count: 1
 // CHECK,helper_large: rodata-label[0]: data_0000
 // CHECK,helper_large: rodata[0]: byte 3, 3, 3, 3, 3, 3, 3, 3
 // CHECK,helper_large: label entrypoint
-// CHECK,helper_large: add64 r1, 16
+// CHECK,helper_large: add64 r1, 0x10
 // CHECK,helper_large: lddw r2, data_0000
-// CHECK,helper_large: mov64 r3, 128
+// CHECK,helper_large: mov64 r3, 0x80
 // CHECK,helper_large: call sol_memcmp_
