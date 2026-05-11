@@ -222,7 +222,7 @@ where
         Err(err) => match err.kind() {
             ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
                 print!("{err}");
-                return Err(err.into());
+                std::process::exit(0);
             }
             _ => return Err(err.into()),
         },
