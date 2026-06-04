@@ -20,6 +20,14 @@ pub enum SbpfLinkerError {
     BuildProgramError { errors: Vec<CompileError> },
     #[error("Instruction Parse Error. Error detail: ({0}).")]
     InstructionParseError(String),
+    #[error(
+        "Unresolved section call relocation at section={section} abs_off={abs_off:#x} addend={addend}"
+    )]
+    UnresolvedSectionCallRelocation {
+        section: String,
+        abs_off: u64,
+        addend: i64,
+    },
 }
 
 pub fn link_program(source: &[u8]) -> Result<Vec<u8>, SbpfLinkerError> {
