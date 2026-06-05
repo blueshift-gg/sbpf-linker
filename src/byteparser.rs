@@ -111,6 +111,18 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
         }
     }
 
+    // Mapping from offset to known labels
+    let mut labels_by_offset: HashMap<u64, String> = HashMap::new();
+    for node in &ast.nodes {
+        if let ASTNode::Label { label, offset } = node {
+            labels_by_offset
+                .entry(*offset)
+                .or_insert_with(|| label.name.clone());
+        }
+    }
+    // Mapping from offset to synthetic labels
+    let mut synthetic_labels_by_offset: HashMap<u64, String> = HashMap::new();
+
     // Gap-fill pass: synthesize rodata entries for byte ranges not covered by
     // any named symbol (e.g. compiler-generated lookup tables).
     let mut synthetic_rodata: Vec<RodataEntry> = Vec::new();
@@ -191,11 +203,12 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
     for section in obj.sections() {
         if let Some(section_base) = text_section_bases.get(&section.index()) {
             let section_base = *section_base;
+            let section_data = section.data().unwrap();
             // parse text section and build instruction nodes
             // lddw takes 16 bytes, other instructions take 8 bytes
             let mut offset = 0;
-            while offset < section.data().unwrap().len() {
-                let data = &section.data().unwrap()[offset..];
+            while offset < section_data.len() {
+                let data = &section_data[offset..];
                 let instruction = Instruction::from_bytes(data);
                 if let Err(error) = instruction {
                     return Err(SbpfLinkerError::InstructionParseError(
@@ -214,9 +227,15 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             }
 
             // handle relocations
+            let section_name =
+                section.name().unwrap_or("<invalid>").to_owned();
             for rel in section.relocations() {
+                let rel_target = rel.1.target();
+                let rel_addend = rel.1.addend();
+                let rel_has_implicit_addend = rel.1.has_implicit_addend();
+
                 // handle relocations for call targets and rodata referenced by lddw
-                let symbol = match rel.1.target() {
+                let symbol = match rel_target {
                     Symbol(sym) => obj.symbol_by_index(sym).unwrap(),
                     _ => continue,
                 };
@@ -243,32 +262,71 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
                     }
                 } else if node.opcode == Opcode::Call {
                     if symbol.kind() == object::SymbolKind::Section {
-                        // STT_SECTION target: find the named symbol at
-                        // (section_index, addend) where addend is the current
-                        // raw integer immediate.
-                        let addend = match node.imm {
-                            Some(Either::Right(Number::Int(val))) => {
-                                val as u64
+                        let addend_i64 = if rel_has_implicit_addend {
+                            // If relocation uses implicit addend, use `node.imm`
+                            match &node.imm {
+                                Some(Either::Right(
+                                    Number::Int(val) | Number::Addr(val),
+                                )) => *val,
+                                _ => rel_addend,
                             }
-                            _ => 0,
+                        } else {
+                            // Otherwise use explicit relocation addend
+                            rel_addend
                         };
-                        let target_name = obj
-                            .symbols()
-                            .find(|s| {
-                                s.section_index() == symbol.section_index()
-                                    && s.address() == addend
-                                    && s.name()
-                                        .map(|n| !n.is_empty())
-                                        .unwrap_or(false)
-                            })
-                            .and_then(|s| s.name().ok())
-                            .map(|n| n.to_owned());
 
-                        if let Some(n) = target_name {
-                            node.imm = Some(Either::Left(n));
-                        }
-                        // If no named symbol found, leave the raw integer immediate
-                        // in place -- the assembler emits it as a direct offset.
+                        let target_section_base =
+                            symbol.section_index().and_then(|idx| {
+                                text_section_bases.get(&idx).copied()
+                            });
+
+                        let resolved_target_offset = target_section_base
+                            .zip(addend_i64.checked_add(1))
+                            .and_then(|(section_base, slots)| {
+                                let slots = u64::try_from(slots).ok()?;
+                                let local = slots
+                                    .checked_mul(8)?
+                                    .checked_add(symbol.address())?;
+                                section_base.checked_add(local)
+                            })
+                            .filter(|target| *target < text_size);
+
+                        let target_name = if let Some(target_offset) =
+                            resolved_target_offset
+                        {
+                            if let Some(existing_name) =
+                                labels_by_offset.get(&target_offset)
+                            {
+                                // Use known label
+                                existing_name.clone()
+                            } else {
+                                // If label is not known, create and use a synthetic label
+                                let synthetic_name =
+                                    synthetic_labels_by_offset
+                                        .entry(target_offset)
+                                        .or_insert_with(|| {
+                                            format!(
+                                                ".__sbpf_section_call_{target_offset:x}"
+                                            )
+                                        })
+                                        .clone();
+                                labels_by_offset.insert(
+                                    target_offset,
+                                    synthetic_name.clone(),
+                                );
+                                synthetic_name
+                            }
+                        } else {
+                            return Err(
+                                SbpfLinkerError::UnresolvedSectionCallRelocation {
+                                    section: section_name.clone(),
+                                    abs_off: section_base + rel.0,
+                                    addend: addend_i64,
+                                },
+                            );
+                        };
+
+                        node.imm = Some(Either::Left(target_name));
                     } else {
                         let name = symbol.name().unwrap_or("");
                         assert!(
@@ -290,6 +348,20 @@ pub fn parse_bytecode(bytes: &[u8]) -> Result<ParseResult, SbpfLinkerError> {
             ));
         }
     }
+
+    if !synthetic_labels_by_offset.is_empty() {
+        // Add synthetic labels to AST
+        let mut synthetic_labels =
+            synthetic_labels_by_offset.into_iter().collect::<Vec<_>>();
+        synthetic_labels.sort_by_key(|(offset, _)| *offset);
+        for (offset, name) in synthetic_labels {
+            ast.nodes.push(ASTNode::Label {
+                label: Label { name, span: 0..1 },
+                offset,
+            });
+        }
+    }
+
     ast.set_text_size(text_size);
 
     let mut parse_result = ast
