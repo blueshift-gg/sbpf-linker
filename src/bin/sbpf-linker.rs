@@ -88,6 +88,53 @@ fn parent_and_file_name(p: PathBuf) -> anyhow::Result<(PathBuf, PathBuf)> {
     Ok((parent.to_path_buf(), Path::new(file_name).to_path_buf()))
 }
 
+fn find_solana_compiler_builtins_rlib(
+    inputs: &[PathBuf],
+) -> io::Result<Option<PathBuf>> {
+    if inputs.iter().any(|input| {
+        input.file_name().and_then(|name| name.to_str()).is_some_and(
+            |file_name| {
+                file_name.starts_with("libsolana_compiler_builtins-")
+                    && file_name.ends_with(".rlib")
+            },
+        )
+    }) {
+        return Ok(None);
+    }
+
+    let Some(dep_dir) = inputs.iter().find_map(|input| {
+        let file_name = input.file_name()?.to_str()?;
+        if file_name.starts_with("libcompiler_builtins-")
+            && file_name.ends_with(".rlib")
+        {
+            input.parent()
+        } else {
+            None
+        }
+    }) else {
+        return Ok(None);
+    };
+    let mut latest = None;
+    for entry in fs::read_dir(dep_dir)? {
+        let path = entry?.path();
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str())
+        else {
+            continue;
+        };
+        if file_name.starts_with("libsolana_compiler_builtins-")
+            && file_name.ends_with(".rlib")
+        {
+            let modified = path.metadata()?.modified()?;
+            match &latest {
+                Some((latest_modified, _)) if modified <= *latest_modified => {
+                }
+                _ => latest = Some((modified, path)),
+            }
+        }
+    }
+    Ok(latest.map(|(_, path)| path))
+}
+
 #[derive(Debug, Parser)]
 #[command(version)]
 struct CommandLine {
@@ -305,7 +352,7 @@ fn main() -> anyhow::Result<()> {
         dump_module,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
-        inputs,
+        mut inputs,
         export,
         fatal_errors,
         deploy,
@@ -376,6 +423,10 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(path) = dump_module {
         linker.set_dump_module_path(path);
+    }
+
+    if let Some(solana_compiler_builtins) = find_solana_compiler_builtins_rlib(&inputs)? {
+        inputs.push(solana_compiler_builtins);
     }
 
     let inputs =
