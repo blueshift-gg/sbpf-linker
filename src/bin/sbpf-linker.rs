@@ -425,7 +425,9 @@ fn main() -> anyhow::Result<()> {
         linker.set_dump_module_path(path);
     }
 
-    if let Some(solana_compiler_builtins) = find_solana_compiler_builtins_rlib(&inputs)? {
+    if let Some(solana_compiler_builtins) =
+        find_solana_compiler_builtins_rlib(&inputs)?
+    {
         inputs.push(solana_compiler_builtins);
     }
 
