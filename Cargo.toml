@@ -16,8 +16,8 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-sbpf-assembler = "0.1.9"
-sbpf-common = "0.1.9"
+sbpf-assembler = { git = "https://github.com/blueshift-gg/sbpf", branch = "feat/cfg" }
+sbpf-common = { git = "https://github.com/blueshift-gg/sbpf", branch = "feat/cfg" }
 clap = { workspace = true }
 either = { version = "1.15.0", features = ["serde"] }
 object = { version = "0.37.3", features = ["write"] }

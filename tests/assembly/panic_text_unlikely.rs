@@ -49,27 +49,29 @@ pub fn entrypoint(input: *mut u8) -> u64 {
 }
 
 // CHECK,panic_path: rodata-count: 0
-// CHECK,panic_path: label {{.*panic_fmt}}
-// CHECK,panic_path: label entrypoint
+// panic_path-DAG: label entrypoint
 // CHECK,panic_path: jne r1, 0x0, +0x2
+// CHECK,panic_path: call {{.*panicking5panic}}
+// panic_path-DAG: label {{.*panic_fmt}}
+// panic_path-DAG: label {{.*panicking5panic}}
 // CHECK,panic_path: call {{.*panic_fmt}}
 
 // CHECK,bounds_check: rodata-count: 0
-// CHECK,bounds_check: label {{.*panic_bounds_check}}
-// CHECK,bounds_check: label {{.*panic_fmt}}
-// CHECK,bounds_check: label entrypoint
+// bounds_check-DAG: label entrypoint
 // CHECK,bounds_check: jne r1, 0x0, +0x2
 // CHECK,bounds_check: mov64 r0, 0x7
 // CHECK,bounds_check: call {{.*panic_bounds_check}}
+// bounds_check-DAG: label {{.*panic_fmt}}
+// bounds_check-DAG: label {{.*panic_bounds_check}}
 // CHECK,bounds_check: call {{.*panic_fmt}}
 
 // CHECK,named_call: rodata-count: 0
-// CHECK,named_call: label callee
-// CHECK,named_call: label entrypoint
+// named_call-DAG: label callee
+// named_call-DAG: label entrypoint
 // CHECK,named_call: call callee
 
 // CHECK,unwrap_case: rodata-count: 0
-// CHECK,unwrap_case: label {{.*unwrap_failed}}
-// CHECK,unwrap_case: label entrypoint
+// unwrap_case-DAG: label entrypoint
 // CHECK,unwrap_case: call {{.*unwrap_failed}}
+// unwrap_case-DAG: label {{.*unwrap_failed}}
 // CHECK,unwrap_case-NOT: call -0x1

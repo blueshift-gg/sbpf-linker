@@ -14,6 +14,7 @@ use clap::{
     builder::{PathBufValueParser, TypedValueParser as _},
     error::ErrorKind,
 };
+use sbpf_assembler::OptimizationConfig;
 use thiserror::Error;
 use tracing::{Level, info};
 use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
@@ -213,6 +214,14 @@ struct CommandLine {
     #[clap(long, value_name = "path")]
     dump_module: Option<PathBuf>,
 
+    /// Write CFG .dot dumps to this directory
+    #[clap(long, value_name = "dir")]
+    dump_cfg_dir: Option<PathBuf>,
+
+    /// Enable SBPF assembler optimizations
+    #[clap(long, default_value_t = true, action = clap::ArgAction::Set)]
+    sbpf_optimize: bool,
+
     /// Extra command line arguments to pass to LLVM
     #[clap(long, value_name = "args", use_value_delimiter = true, action = clap::ArgAction::Append)]
     llvm_args: Vec<CString>,
@@ -318,6 +327,8 @@ where
         unroll_loops: cli.unroll_loops,
         ignore_inline_never: cli.ignore_inline_never,
         dump_module: cli.dump_module,
+        dump_cfg_dir: cli.dump_cfg_dir,
+        sbpf_optimize: cli.sbpf_optimize,
         llvm_args,
         disable_expand_memcpy_in_order: cli.disable_expand_memcpy_in_order,
         disable_memory_builtins: cli.disable_memory_builtins,
@@ -350,6 +361,8 @@ fn main() -> anyhow::Result<()> {
         unroll_loops,
         ignore_inline_never,
         dump_module,
+        dump_cfg_dir,
+        sbpf_optimize,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
         mut inputs,
@@ -445,7 +458,15 @@ fn main() -> anyhow::Result<()> {
     }
 
     let program = std::fs::read(&output).unwrap();
-    let bytecode = link_program(&program)?;
+    let sbpf_optimization = if sbpf_optimize {
+        match dump_cfg_dir {
+            Some(dir) => OptimizationConfig::enabled().with_cfg_dump_dir(dir),
+            None => OptimizationConfig::enabled(),
+        }
+    } else {
+        OptimizationConfig::disabled()
+    };
+    let bytecode = link_program(&program, sbpf_optimization)?;
 
     let src_name = std::path::Path::new(&output)
         .file_stem()
@@ -512,11 +533,13 @@ mod tests {
             deploy,
             cpu_features,
             llvm_args,
+            sbpf_optimize,
             ..
         } = process_cli_options(args).unwrap();
         assert!(matches!(cpu, Cpu::V2));
         assert!(disable_expand_memcpy_in_order);
         assert!(deploy);
+        assert!(sbpf_optimize);
 
         assert_eq!(cpu_features.to_bytes(), b"+allows-misaligned-mem-access");
         assert!(
@@ -538,6 +561,7 @@ mod tests {
             "--deploy=false",
             "--fatal-errors=false",
             "--disable-expand-memcpy-in-order=false",
+            "--sbpf-optimize=false",
         ]
         .into_iter()
         .map(|s| s.to_string());
@@ -547,6 +571,7 @@ mod tests {
             deploy,
             fatal_errors,
             disable_expand_memcpy_in_order,
+            sbpf_optimize,
             output,
             ..
         } = process_cli_options(args).unwrap();
@@ -557,6 +582,7 @@ mod tests {
         assert!(!deploy);
         assert!(!fatal_errors);
         assert!(!disable_expand_memcpy_in_order);
+        assert!(!sbpf_optimize);
         assert_eq!(output, PathBuf::from("/tmp/bin.so"));
     }
 

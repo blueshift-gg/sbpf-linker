@@ -12,6 +12,7 @@ use std::{
 use either::Either;
 use object::{File, Object as _, ObjectSection as _};
 use sbpf_assembler::{
+    OptimizationConfig,
     astnode::{ASTNode, ROData},
     parser::Token,
 };
@@ -125,7 +126,7 @@ fn compile_test() {
 fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
     let bytes = fs::read(path)?;
     let syscall_labels = collect_syscall_labels(&bytes)?;
-    let parse_result = parse_bytecode(&bytes)?;
+    let parse_result = parse_bytecode(&bytes, OptimizationConfig::enabled())?;
     let ph_count = if parse_result.prog_is_static { 1u64 } else { 3u64 };
     let rodata_base =
         parse_result.code_section.get_size() + 64 + ph_count * 56;
@@ -147,9 +148,14 @@ fn render_emitted_program(path: &Path) -> anyhow::Result<String> {
     }
 
     for node in parse_result.code_section.get_nodes() {
+        if let ASTNode::Label { label, offset } = node {
+            code_labels.insert(*offset as i64, label.name.clone());
+        }
+    }
+
+    for node in parse_result.code_section.get_nodes() {
         match node {
             ASTNode::Label { label, offset } => {
-                code_labels.insert(*offset as i64, label.name.clone());
                 out.push(format!("{offset:04x}: label {}", label.name));
             }
             ASTNode::Instruction { instruction, offset } => {
