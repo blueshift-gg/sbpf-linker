@@ -85,12 +85,12 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,borrow_const_direct: exit
 
 // CHECK,borrow_const_match: rodata-count: 2
-// CHECK,borrow_const_match: rodata[0]: byte 17, 1, 2, 3, 4, 5, 6, 7
-// CHECK,borrow_const_match: rodata[8]: byte 34, 1, 2, 3, 4, 5, 6, 7
+// CHECK,borrow_const_match: rodata[0]: byte 34, 1, 2, 3, 4, 5, 6, 7
+// CHECK,borrow_const_match: rodata[8]: byte 17, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_const_match: label borrow_const_match
-// CHECK,borrow_const_match: lddw r2, rodata[0]
-// CHECK,borrow_const_match: jeq r1, 0x0, +0x2
 // CHECK,borrow_const_match: lddw r2, rodata[8]
+// CHECK,borrow_const_match: jeq r1, 0x0, +0x2
+// CHECK,borrow_const_match: lddw r2, rodata[0]
 // CHECK,borrow_const_match: ldxb r0, [r2+0x0]
 // CHECK,borrow_const_match: exit
 
