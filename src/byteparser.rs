@@ -114,6 +114,9 @@ pub fn parse_bytecode(
                 label: Label { name: sym_name.to_owned(), span: 0..1 },
                 offset: section_base + symbol.address(),
             });
+            if symbol.kind() == object::SymbolKind::Text {
+                ast.add_function_entry(sym_name.to_owned());
+            }
             if sym_name == "entrypoint" {
                 ast.nodes.push(ASTNode::GlobalDecl {
                     global_decl: GlobalDecl {

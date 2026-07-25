@@ -85,12 +85,12 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,borrow_const_direct: exit
 
 // CHECK,borrow_const_match: rodata-count: 2
-// CHECK,borrow_const_match: rodata[0]: byte 34, 1, 2, 3, 4, 5, 6, 7
-// CHECK,borrow_const_match: rodata[8]: byte 17, 1, 2, 3, 4, 5, 6, 7
+// CHECK,borrow_const_match-DAG: rodata{{\[}}[[CONST_A_OFFSET:[0-9]+]]{{\]}}: byte 17, 1, 2, 3, 4, 5, 6, 7
+// CHECK,borrow_const_match-DAG: rodata{{\[}}[[CONST_B_OFFSET:[0-9]+]]{{\]}}: byte 34, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_const_match: label borrow_const_match
-// CHECK,borrow_const_match: lddw r2, rodata[8]
+// CHECK,borrow_const_match: lddw r2, rodata{{\[}}[[CONST_A_OFFSET]]{{\]}}
 // CHECK,borrow_const_match: jeq r1, 0x0, +0x2
-// CHECK,borrow_const_match: lddw r2, rodata[0]
+// CHECK,borrow_const_match: lddw r2, rodata{{\[}}[[CONST_B_OFFSET]]{{\]}}
 // CHECK,borrow_const_match: ldxb r0, [r2+0x0]
 // CHECK,borrow_const_match: exit
 
@@ -102,12 +102,12 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,borrow_static_direct: exit
 
 // CHECK,borrow_static_match: rodata-count: 2
-// CHECK,borrow_static_match: rodata[0]: byte 51, 1, 2, 3, 4, 5, 6, 7
-// CHECK,borrow_static_match: rodata[8]: byte 68, 1, 2, 3, 4, 5, 6, 7
+// CHECK,borrow_static_match-DAG: rodata{{\[}}[[STATIC_A_OFFSET:[0-9]+]]{{\]}}: byte 51, 1, 2, 3, 4, 5, 6, 7
+// CHECK,borrow_static_match-DAG: rodata{{\[}}[[STATIC_B_OFFSET:[0-9]+]]{{\]}}: byte 68, 1, 2, 3, 4, 5, 6, 7
 // CHECK,borrow_static_match: label borrow_static_match
-// CHECK,borrow_static_match: lddw r2, rodata[0]
+// CHECK,borrow_static_match: lddw r2, rodata{{\[}}[[STATIC_A_OFFSET]]{{\]}}
 // CHECK,borrow_static_match: jeq r1, 0x0, +0x2
-// CHECK,borrow_static_match: lddw r2, rodata[8]
+// CHECK,borrow_static_match: lddw r2, rodata{{\[}}[[STATIC_B_OFFSET]]{{\]}}
 // CHECK,borrow_static_match: ldxb r0, [r2+0x0]
 // CHECK,borrow_static_match: exit
 
@@ -122,11 +122,11 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 // CHECK,by_value_const_match: exit
 
 // CHECK,mixed_match: rodata-count: 2
-// CHECK,mixed_match: rodata[0]: byte 51, 1, 2, 3, 4, 5, 6, 7
-// CHECK,mixed_match: rodata[8]: byte 34, 1, 2, 3, 4, 5, 6, 7
+// CHECK,mixed_match-DAG: rodata{{\[}}[[STATIC_A_OFFSET:[0-9]+]]{{\]}}: byte 51, 1, 2, 3, 4, 5, 6, 7
+// CHECK,mixed_match-DAG: rodata{{\[}}[[CONST_B_OFFSET:[0-9]+]]{{\]}}: byte 34, 1, 2, 3, 4, 5, 6, 7
 // CHECK,mixed_match: label mixed_match
-// CHECK,mixed_match: lddw r2, rodata[0]
+// CHECK,mixed_match: lddw r2, rodata{{\[}}[[STATIC_A_OFFSET]]{{\]}}
 // CHECK,mixed_match: jeq r1, 0x0, +0x2
-// CHECK,mixed_match: lddw r2, rodata[8]
+// CHECK,mixed_match: lddw r2, rodata{{\[}}[[CONST_B_OFFSET]]{{\]}}
 // CHECK,mixed_match: ldxb r0, [r2+0x0]
 // CHECK,mixed_match: exit
