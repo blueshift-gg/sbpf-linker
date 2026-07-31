@@ -390,49 +390,44 @@ fn run_command(cmd: &mut Command, description: &str) -> Result<()> {
     Ok(())
 }
 
-// On macOS, use Homebrew for the build tools and native libraries.
-fn ensure_brew_dependencies() -> Result<()> {
-    if !command_available("brew") {
-        anyhow::bail!(
-            "Homebrew is required to install sbpf-linker on macOS\nhelp: install Homebrew from https://brew.sh and retry"
-        );
-    }
-
-    let formulas = ["cmake", "ninja", "llvm", "zlib", "zstd"];
-    let missing = formulas
-        .into_iter()
-        .filter(|formula| {
-            Command::new("brew")
-                .args(["list", "--versions", formula])
-                .output()
-                .map_or(true, |output| {
-                    !output.status.success() || output.stdout.is_empty()
-                })
-        })
-        .collect::<Vec<_>>();
-
-    if !missing.is_empty() {
-        println!(
-            "Installing missing Homebrew dependencies: {}",
-            missing.join(", ")
-        );
-        let mut command = Command::new("brew");
-        command.arg("install").args(missing);
-        run_command(&mut command, "install Homebrew dependencies")?;
-    }
-    Ok(())
-}
-
-fn command_available(command: &str) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
 fn ensure_build_dependencies() -> Result<()> {
+    fn command_available(command: &str) -> bool {
+        Command::new(command)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
     if cfg!(target_os = "macos") {
-        ensure_brew_dependencies()?;
+        if !command_available("brew") {
+            anyhow::bail!(
+                "Homebrew is required to install sbpf-linker on macOS\nhelp: install Homebrew from https://brew.sh and retry"
+            );
+        }
+
+        // On macOS, use Homebrew for the build tools and native libraries.
+        let formulas = ["cmake", "ninja", "llvm", "zlib", "zstd"];
+        let missing = formulas
+            .into_iter()
+            .filter(|formula| {
+                Command::new("brew")
+                    .args(["list", "--versions", formula])
+                    .output()
+                    .map_or(true, |output| {
+                        !output.status.success() || output.stdout.is_empty()
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        if !missing.is_empty() {
+            println!(
+                "Installing missing Homebrew dependencies: {}",
+                missing.join(", ")
+            );
+            let mut command = Command::new("brew");
+            command.arg("install").args(missing);
+            run_command(&mut command, "install Homebrew dependencies")?;
+        }
     }
 
     let missing = ["git", "cmake", "ninja"]

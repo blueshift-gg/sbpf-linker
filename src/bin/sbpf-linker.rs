@@ -176,7 +176,6 @@ struct CommandLine {
     override_cpu_flag: Option<Cpu>,
 
     /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris.
-    /// LLVM builds containing the BPF allows-misaligned-mem-access target feature support it.
     /// Use +feature to enable a feature, or -feature to disable it. For example
     /// --cpu-features=+allows-misaligned-mem-access,+alu32,-dwarfris
     #[clap(
