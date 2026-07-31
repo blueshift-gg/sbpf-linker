@@ -176,8 +176,7 @@ struct CommandLine {
     override_cpu_flag: Option<Cpu>,
 
     /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris.
-    /// LLVM 22 builds also support allows-misaligned-mem-access. Use +feature to enable a
-    /// feature, or -feature to disable it. For example
+    /// Use +feature to enable a feature, or -feature to disable it. For example
     /// --cpu-features=+allows-misaligned-mem-access,+alu32,-dwarfris
     #[clap(
         long,
@@ -300,6 +299,17 @@ where
         .with_writer(writer)
 }
 
+fn llvm_version() -> (u32, u32, u32) {
+    let (mut major, mut minor, mut patch) = (0, 0, 0);
+    // SAFETY: LLVMGetVersion only writes to the three valid output pointers.
+    unsafe {
+        bpf_linker::llvm_sys::core::LLVMGetVersion(
+            &mut major, &mut minor, &mut patch,
+        );
+    }
+    (major, minor, patch)
+}
+
 fn process_cli_options<I>(args: I) -> anyhow::Result<CommandLine>
 where
     I: Iterator<Item = String>,
@@ -307,8 +317,14 @@ where
     let cli: CommandLine = match Parser::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => match err.kind() {
-            ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+            ErrorKind::DisplayHelp => {
                 print!("{err}");
+                std::process::exit(0);
+            }
+            ErrorKind::DisplayVersion => {
+                print!("{err}");
+                let (major, minor, patch) = llvm_version();
+                println!("LLVM {major}.{minor}.{patch}");
                 std::process::exit(0);
             }
             _ => return Err(err.into()),
