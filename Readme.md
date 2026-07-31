@@ -13,7 +13,12 @@ cargo install sbpf-linker
 
 ### LLVM Main: Early Feature Gate
 
-Builds and installs sbpf-linker against a cached [`llvm/llvm-project`](https://github.com/llvm/llvm-project) `main` checkout with static LLVM linking. The install command reuses the cached LLVM checkout and build when available.
+Some programs need BPF backend capabilities that are not available in older
+LLVM builds. Build and install sbpf-linker against a cached
+[`llvm/llvm-project`](https://github.com/llvm/llvm-project) `main` checkout
+with static LLVM linking. The install command checks for Git, CMake, and Ninja,
+installs missing Homebrew dependencies on macOS, and reuses the cached LLVM
+checkout and build when available.
 
 ```sh
 cargo install-with-llvm-main

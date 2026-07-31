@@ -174,9 +174,6 @@ fn build_llvm_if_needed(
             })?;
         }
 
-        if cfg!(target_os = "macos") {
-            ensure_brew_dependencies()?;
-        }
         // Build only the LLVM components needed by sbpf-linker.
         let mut install_arg = OsString::from("-DCMAKE_INSTALL_PREFIX=");
         install_arg.push(paths.install_dir.as_os_str());
@@ -269,6 +266,7 @@ fn build_llvm_if_needed(
 }
 
 fn install() -> Result<()> {
+    ensure_build_dependencies()?;
     let paths = llvm_paths()?;
     let checkout_changed = ensure_llvm_checkout(&paths.src_dir)?;
     build_llvm_if_needed(&paths, checkout_changed)?;
@@ -280,6 +278,7 @@ fn install() -> Result<()> {
 }
 
 fn update_llvm() -> Result<()> {
+    ensure_build_dependencies()?;
     let paths = llvm_paths()?;
     let checkout_changed = update_llvm_checkout(&paths.src_dir)?;
     build_llvm_if_needed(&paths, checkout_changed)
@@ -291,8 +290,6 @@ fn build_linker(llvm_install_dir: &Path) -> Result<()> {
     let mut cmd = Command::new("cargo");
 
     if cfg!(target_os = "macos") {
-        ensure_brew_dependencies()?;
-
         // Ensure brew prefixes
         let llvm_output = Command::new("brew")
             .args(["--prefix", "llvm"])
@@ -393,31 +390,60 @@ fn run_command(cmd: &mut Command, description: &str) -> Result<()> {
     Ok(())
 }
 
-// On macOS, use Homebrew's llvm for libc++, zlib, and zstd
-// (macOS doesn't provide static libraries, and building them from source is complex)
+// On macOS, use Homebrew for the build tools and native libraries.
 fn ensure_brew_dependencies() -> Result<()> {
-    let llvm_installed = Command::new("brew")
-        .args(["--prefix", "llvm"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let zlib_installed = Command::new("brew")
-        .args(["--prefix", "zlib"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-    let zstd_installed = Command::new("brew")
-        .args(["--prefix", "zstd"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    if !command_available("brew") {
+        anyhow::bail!(
+            "Homebrew is required to install sbpf-linker on macOS\nhelp: install Homebrew from https://brew.sh and retry"
+        );
+    }
 
-    if !llvm_installed || !zlib_installed || !zstd_installed {
-        println!("  Installing Homebrew dependencies (llvm, zlib, zstd)...");
-        run_command(
-            Command::new("brew").args(["install", "llvm", "zlib", "zstd"]),
-            "install brew dependencies",
-        )?;
+    let formulas = ["cmake", "ninja", "llvm", "zlib", "zstd"];
+    let missing = formulas
+        .into_iter()
+        .filter(|formula| {
+            Command::new("brew")
+                .args(["list", "--versions", formula])
+                .output()
+                .map_or(true, |output| {
+                    !output.status.success() || output.stdout.is_empty()
+                })
+        })
+        .collect::<Vec<_>>();
+
+    if !missing.is_empty() {
+        println!(
+            "Installing missing Homebrew dependencies: {}",
+            missing.join(", ")
+        );
+        let mut command = Command::new("brew");
+        command.arg("install").args(missing);
+        run_command(&mut command, "install Homebrew dependencies")?;
+    }
+    Ok(())
+}
+
+fn command_available(command: &str) -> bool {
+    Command::new(command)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn ensure_build_dependencies() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        ensure_brew_dependencies()?;
+    }
+
+    let missing = ["git", "cmake", "ninja"]
+        .into_iter()
+        .filter(|command| !command_available(command))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "missing required build tools: {}\nhelp: install them with your system package manager and retry",
+            missing.join(", ")
+        );
     }
     Ok(())
 }
