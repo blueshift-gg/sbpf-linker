@@ -43,3 +43,59 @@ jobs:
       - name: Install FileCheck
         run: sudo apt-get update && sudo apt-get install -y llvm-18-tools
       - run: cargo test -- --nocapture
+        
+  coverage:
+    name: coverage (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rust-src, llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install FileCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-tools
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # The harness normally builds this sysroot itself. '
+      # Build it first so host coverage flags do not reach the nested bpfel Cargo build.  
+      # TODO: if ci duration becomes an issue, extract sysroot creation into an xtask command to avoid running
+      # the compile-test suite twice.
+      - name: Build BPF sysroot
+        run: cargo test --test tests compile_test -- --nocapture
+
+      - name: Generate code coverage
+        env:
+          BPFEL_SYSROOT_DIR: ${{ github.workspace }}/target/sysroot
+          MINIMUM_LINE_COVERAGE: 83
+        run: |
+          set -o pipefail
+
+          coverage_status=0 
+          cargo llvm-cov \
+            --package sbpf-linker \
+            --all-targets \
+            --color never \
+            --fail-under-lines "$MINIMUM_LINE_COVERAGE" \
+            | tee coverage.txt || coverage_status=$?
+
+          {
+            echo "## Code coverage"
+            echo
+            echo "Required line coverage: **${MINIMUM_LINE_COVERAGE}%**"
+            echo
+            echo '```text'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$coverage_status"
+      
