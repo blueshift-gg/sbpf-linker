@@ -22,9 +22,11 @@ use sbpf_common::{
     instruction::{AsmFormat, Instruction},
     opcode::Opcode,
 };
-use sbpf_linker::byteparser::parse_bytecode;
+use sbpf_linker::{ProgramOptions, byteparser::parse_bytecode};
 
 const NO_TESTS_FILTER: &str = "__no_tests_match_this_sbpf_arch__";
+
+const DEFAULT_STACK_FRAME_SIZE: i32 = 4096;
 
 trait TestArch {
     const ARCH: SbpfArch;
@@ -75,6 +77,13 @@ fn rustc_cmd() -> Command {
     )
 }
 
+fn rustc_llvm_version() -> Option<String> {
+    let output = rustc_cmd().arg("-vV").output().ok()?;
+    String::from_utf8(output.stdout).ok()?.lines().find_map(|line| {
+        line.strip_prefix("LLVM version:").map(|v| v.trim().to_owned())
+    })
+}
+
 fn find_binary(binary_re_str: &str) -> PathBuf {
     let binary_re = regex::Regex::new(binary_re_str).unwrap();
     let mut binary = which::which_re(binary_re).expect(binary_re_str);
@@ -101,6 +110,7 @@ where
         target: target.to_owned(),
         target_rustcflags: Some(target_rustcflags),
         llvm_filecheck,
+        llvm_version: rustc_llvm_version(),
         mode,
         src_base: PathBuf::from(format!("tests/{mode}")),
         ..Default::default()
@@ -250,8 +260,14 @@ fn compile_test() {
 fn render_emitted_program<A: TestArch>(path: &Path) -> anyhow::Result<String> {
     let bytes = fs::read(path)?;
     let syscall_labels = collect_syscall_labels::<A>(&bytes)?;
-    let parse_result =
-        parse_bytecode(&bytes, OptimizationConfig::enabled(), A::ARCH)?;
+    let parse_result = parse_bytecode(
+        &bytes,
+        ProgramOptions::new(
+            OptimizationConfig::enabled(),
+            A::ARCH,
+            DEFAULT_STACK_FRAME_SIZE,
+        ),
+    )?;
     let ph_count = if parse_result.prog_is_static { 1u64 } else { 3u64 };
     let rodata_base =
         parse_result.code_section.get_size() + 64 + ph_count * 56;

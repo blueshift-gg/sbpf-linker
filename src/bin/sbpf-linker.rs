@@ -20,7 +20,8 @@ use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
 use tracing_tree::HierarchicalLayer;
 
 use sbpf_linker::{
-    OptimizationConfig, SbpfArch, SbpfLinkerError, link_program,
+    OptimizationConfig, ProgramOptions, SbpfArch, SbpfLinkerError,
+    link_program,
 };
 
 #[derive(Debug, Error)]
@@ -40,6 +41,10 @@ enum CliError {
     )]
     UnsupportedV0Cpu(Cpu),
 
+    #[error(
+        "invalid `-bpf-stack-size` value `{0}`; expected a positive value that fits in i32"
+    )]
+    InvalidStackFrameSize(String),
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
     #[error("Program Write Error. Error detail: ({msg}).")]
@@ -310,6 +315,26 @@ fn llvm_version() -> (u32, u32, u32) {
     (major, minor, patch)
 }
 
+fn stack_frame_size_from_llvm_args(
+    llvm_args: &[CString],
+) -> Result<i32, CliError> {
+    const PREFIX: &str = "-bpf-stack-size=";
+
+    let value = llvm_args
+        .iter()
+        .rev()
+        .find_map(|arg| arg.to_str().ok()?.strip_prefix(PREFIX))
+        .expect(
+            "process_cli_options always supplies `-bpf-stack-size=<value>`",
+        );
+
+    value
+        .parse::<i32>()
+        .ok()
+        .filter(|size| *size > 0)
+        .ok_or_else(|| CliError::InvalidStackFrameSize(value.to_string()))
+}
+
 fn process_cli_options<I>(args: I) -> anyhow::Result<CommandLine>
 where
     I: Iterator<Item = String>,
@@ -350,7 +375,7 @@ where
     let mut llvm_args = cli.llvm_args;
     if !llvm_args
         .iter()
-        .any(|arg| arg.as_bytes().starts_with(b"-bpf-stack-size"))
+        .any(|arg| arg.as_bytes().starts_with(b"-bpf-stack-size="))
     {
         llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
     }
@@ -474,6 +499,8 @@ fn main() -> anyhow::Result<()> {
         [.., CliOptLevel(optimize)] => optimize,
     };
 
+    let stack_frame_size = stack_frame_size_from_llvm_args(&llvm_args)?;
+
     let mut linker = Linker::new(LinkerOptions {
         target,
         cpu,
@@ -520,7 +547,10 @@ fn main() -> anyhow::Result<()> {
     } else {
         OptimizationConfig::disabled()
     };
-    let bytecode = link_program(&program, sbpf_optimization, arch.0)?;
+    let bytecode = link_program(
+        &program,
+        ProgramOptions::new(sbpf_optimization, arch.0, stack_frame_size),
+    )?;
 
     let src_name = std::path::Path::new(&output)
         .file_stem()
