@@ -433,7 +433,7 @@ pub fn parse_bytecode(
             .map(|overlap| CompileError::BytecodeError {
                 error: format!(
                     "local stack range {:?} overlaps incoming spilled-argument range {:?} in function `{}`",
-                    overlap.local, overlap.argument, overlap.function
+                    overlap.local_stack, overlap.incoming_args, overlap.function
                 ),
                 span: 0..0,
                 custom_label: None,

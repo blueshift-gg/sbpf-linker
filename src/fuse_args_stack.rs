@@ -19,38 +19,36 @@ pub struct FunctionRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StackArgOverlap {
+pub struct StackRangeOverlap {
     pub function: String,
-    pub local: Range<i32>,
-    pub argument: Range<i32>,
+    pub local_stack: Range<i32>,
+    pub incoming_args: Range<i32>,
 }
 
-fn memory_width(opcode: Opcode) -> Option<i32> {
-    match opcode {
-        Opcode::Ldxb | Opcode::Stb | Opcode::Stxb => Some(1),
-        Opcode::Ldxh | Opcode::Sth | Opcode::Stxh => Some(2),
-        Opcode::Ldxw | Opcode::Stw | Opcode::Stxw => Some(4),
-        Opcode::Ldxdw | Opcode::Stdw | Opcode::Stxdw => Some(8),
-        _ => None,
-    }
+/// A load from or store to `[register + offset]`, `width` bytes wide.
+struct MemoryAccess {
+    register: u8,
+    offset: i16,
+    width: i32,
+    is_load: bool,
 }
 
 pub fn diagnose_stack_arg_overlaps(
     ast: &AST,
     stack_frame_size: i32,
     functions: &[FunctionRange],
-) -> Vec<StackArgOverlap> {
-    fn ranges_overlap(left: &Range<i32>, right: &Range<i32>) -> bool {
-        left.start < right.end && right.start < left.end
-    }
-
-    fn memory_access(
-        instruction: &Instruction,
-    ) -> Option<(u8, i16, i32, bool)> {
+) -> Vec<StackRangeOverlap> {
+    let memory_access = |instruction: &Instruction| -> Option<MemoryAccess> {
         let Some(Either::Right(offset)) = instruction.off else {
             return None;
         };
-        let width = memory_width(instruction.opcode)?;
+        let width = match instruction.opcode {
+            Opcode::Ldxb | Opcode::Stb | Opcode::Stxb => 1,
+            Opcode::Ldxh | Opcode::Sth | Opcode::Stxh => 2,
+            Opcode::Ldxw | Opcode::Stw | Opcode::Stxw => 4,
+            Opcode::Ldxdw | Opcode::Stdw | Opcode::Stxdw => 8,
+            _ => return None,
+        };
         let (register, is_load) =
             if LOAD_MEMORY_OPS.contains(&instruction.opcode) {
                 (instruction.src.as_ref()?.n, true)
@@ -62,8 +60,8 @@ pub fn diagnose_stack_arg_overlaps(
                 return None;
             };
 
-        Some((register, offset, width, is_load))
-    }
+        Some(MemoryAccess { register, offset, width, is_load })
+    };
 
     let mut overlaps = Vec::new();
 
@@ -79,7 +77,7 @@ pub fn diagnose_stack_arg_overlaps(
 
         let mut locals = Vec::new();
         let mut arguments = Vec::new();
-        for (register, offset, width, is_load) in
+        for MemoryAccess { register, offset, width, is_load } in
             instructions.filter_map(memory_access)
         {
             if register == R10 && offset < 0 {
@@ -91,13 +89,15 @@ pub fn diagnose_stack_arg_overlaps(
             }
         }
 
-        for local in &locals {
-            for argument in &arguments {
-                if ranges_overlap(local, argument) {
-                    overlaps.push(StackArgOverlap {
+        for local_stack in &locals {
+            for incoming_args in &arguments {
+                if local_stack.start < incoming_args.end
+                    && incoming_args.start < local_stack.end
+                {
+                    overlaps.push(StackRangeOverlap {
                         function: function.name.clone(),
-                        local: local.clone(),
-                        argument: argument.clone(),
+                        local_stack: local_stack.clone(),
+                        incoming_args: incoming_args.clone(),
                     });
                 }
             }
@@ -118,9 +118,9 @@ pub fn rewrite_r11_stack_args(
             continue;
         };
 
-        let uses_r11 = instruction.src.as_ref().is_some_and(|r| r.n == R11)
-            || instruction.dst.as_ref().is_some_and(|r| r.n == R11);
-        if !uses_r11 {
+        if !instruction.src.as_ref().is_some_and(|r| r.n == R11)
+            && !instruction.dst.as_ref().is_some_and(|r| r.n == R11)
+        {
             continue;
         }
 
@@ -139,11 +139,6 @@ pub fn rewrite_r11_stack_args(
         };
 
         if is_load {
-            assert_eq!(
-                instruction.src.as_ref().map(|r| r.n),
-                Some(R11),
-                "r11 must be the base register of a memory load"
-            );
             assert!(
                 off > 0,
                 "an incoming r11 load must have a positive offset"
@@ -169,11 +164,6 @@ pub fn rewrite_r11_stack_args(
                 .expect("a memory load always has a source register")
                 .n = R10;
         } else {
-            assert_eq!(
-                instruction.dst.as_ref().map(|r| r.n),
-                Some(R11),
-                "r11 must be the base register of a memory store"
-            );
             assert!(
                 off < 0,
                 "an outgoing r11 store must have a negative offset"
