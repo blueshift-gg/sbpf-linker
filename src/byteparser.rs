@@ -3,7 +3,7 @@ use crate::{ProgramOptions, SbpfLinkerError};
 use sbpf_assembler::ast::{AST, build_program};
 use sbpf_assembler::astnode::{ASTNode, GlobalDecl, Label, ROData};
 use sbpf_assembler::section::DebugSection;
-use sbpf_assembler::{CompileError, ProgramLayout, SbpfArch, Token};
+use sbpf_assembler::{ProgramLayout, SbpfArch, Token};
 use sbpf_common::{
     inst_param::Number, instruction::Instruction, opcode::Opcode,
 };
@@ -427,22 +427,17 @@ pub fn parse_bytecode(
         })
         .collect::<Vec<_>>();
 
-    let overlap_errors =
+    for overlap in
         diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions)
-            .into_iter()
-            .map(|overlap| CompileError::BytecodeError {
-                error: format!(
-                    "local stack range {:?} overlaps incoming spilled-argument range {:?} in function `{}`",
-                    overlap.local_stack, overlap.incoming_args, overlap.function
-                ),
-                span: 0..0,
-                custom_label: None,
-            })
-            .collect::<Vec<_>>();
-    if !overlap_errors.is_empty() {
-        return Err(SbpfLinkerError::BuildProgramError {
-            errors: overlap_errors,
-        });
+    {
+        tracing::warn!(
+            function = %overlap.function,
+            local_start = overlap.local_stack.start,
+            local_end = overlap.local_stack.end,
+            argument_start = overlap.incoming_args.start,
+            argument_end = overlap.incoming_args.end,
+            "local stack variable overlaps incoming spilled-argument region"
+        );
     }
 
     rewrite_r11_stack_args(&mut ast, stack_frame_size)
