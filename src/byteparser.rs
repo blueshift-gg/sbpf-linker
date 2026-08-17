@@ -430,7 +430,7 @@ pub fn parse_bytecode(
     for overlap in
         diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions)
     {
-        tracing::warn!(
+        tracing::error!(
             function = %overlap.function,
             local_start = overlap.local_stack.start,
             local_end = overlap.local_stack.end,

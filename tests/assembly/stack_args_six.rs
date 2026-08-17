@@ -1,6 +1,5 @@
 // assembly-output: ptx-linker
 // ignore-sbpf-arch: v0
-// min-llvm-version: 23.0
 // compile-flags: --crate-type bin -C opt-level=3 -C panic=abort -C link-arg=--override-cpu-flag=v3
 
 #![no_std]

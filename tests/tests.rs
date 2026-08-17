@@ -77,13 +77,6 @@ fn rustc_cmd() -> Command {
     )
 }
 
-fn rustc_llvm_version() -> Option<String> {
-    let output = rustc_cmd().arg("-vV").output().ok()?;
-    String::from_utf8(output.stdout).ok()?.lines().find_map(|line| {
-        line.strip_prefix("LLVM version:").map(|v| v.trim().to_owned())
-    })
-}
-
 fn find_binary(binary_re_str: &str) -> PathBuf {
     let binary_re = regex::Regex::new(binary_re_str).unwrap();
     let mut binary = which::which_re(binary_re).expect(binary_re_str);
@@ -110,7 +103,6 @@ where
         target: target.to_owned(),
         target_rustcflags: Some(target_rustcflags),
         llvm_filecheck,
-        llvm_version: rustc_llvm_version(),
         mode,
         src_base: PathBuf::from(format!("tests/{mode}")),
         ..Default::default()
