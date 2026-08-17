@@ -1,9 +1,9 @@
-use crate::SbpfLinkerError;
+use crate::{ProgramOptions, SbpfLinkerError};
 
 use sbpf_assembler::ast::{AST, build_program};
 use sbpf_assembler::astnode::{ASTNode, GlobalDecl, Label, ROData};
 use sbpf_assembler::section::DebugSection;
-use sbpf_assembler::{OptimizationConfig, ProgramLayout, SbpfArch, Token};
+use sbpf_assembler::{ProgramLayout, SbpfArch, Token};
 use sbpf_common::{
     inst_param::Number, instruction::Instruction, opcode::Opcode,
 };
@@ -15,6 +15,10 @@ use object::{
 };
 
 use std::collections::HashMap;
+
+use crate::fuse_args_stack::{
+    FunctionRange, diagnose_stack_arg_overlaps, rewrite_r11_stack_args,
+};
 
 fn decode_instruction_for_arch(
     data: &[u8],
@@ -39,9 +43,9 @@ struct RodataEntry {
 
 pub fn parse_bytecode(
     bytes: &[u8],
-    opt_config: OptimizationConfig,
-    arch: SbpfArch,
+    options: ProgramOptions,
 ) -> Result<ProgramLayout, SbpfLinkerError> {
+    let ProgramOptions { optimization, arch, stack_frame_size } = options;
     let mut ast = AST::new();
 
     let obj = File::parse(bytes)?;
@@ -73,6 +77,7 @@ pub fn parse_bytecode(
     let mut rodata_table: HashMap<(Option<SectionIndex>, u64), String> =
         HashMap::new();
 
+    let mut function_starts = Vec::new();
     for symbol in obj.symbols() {
         if let Some(ro_section) = symbol
             .section_index()
@@ -116,6 +121,10 @@ pub fn parse_bytecode(
             });
             if symbol.kind() == object::SymbolKind::Text {
                 ast.add_function_entry(sym_name.to_owned());
+                function_starts.push((
+                    section_base + symbol.address(),
+                    sym_name.to_owned(),
+                ));
             }
             if sym_name == "entrypoint" {
                 ast.nodes.push(ASTNode::GlobalDecl {
@@ -402,7 +411,39 @@ pub fn parse_bytecode(
         ast.nodes = metadata;
     }
 
-    let mut parse_result = build_program(ast, arch, opt_config)
+    function_starts.sort_by_key(|(start, _)| *start);
+    // Function aliases can produce multiple STT_FUNC symbols at the same
+    // address. Keep one entry per address when constructing function ranges.
+    function_starts.dedup_by_key(|(start, _)| *start);
+    let functions = function_starts
+        .iter()
+        .enumerate()
+        .map(|(index, (start, name))| FunctionRange {
+            name: name.clone(),
+            start: *start,
+            end: function_starts
+                .get(index + 1)
+                .map_or(text_size, |(next_start, _)| *next_start),
+        })
+        .collect::<Vec<_>>();
+
+    for overlap in
+        diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions)
+    {
+        tracing::error!(
+            function = %overlap.function,
+            local_start = overlap.local_stack.start,
+            local_end = overlap.local_stack.end,
+            argument_start = overlap.incoming_args.start,
+            argument_end = overlap.incoming_args.end,
+            "local stack variable overlaps incoming spilled-argument region"
+        );
+    }
+
+    rewrite_r11_stack_args(&mut ast, stack_frame_size)
+        .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })?;
+
+    let mut parse_result = build_program(ast, arch, optimization)
         .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })?;
 
     parse_result.debug_sections = debug_sections;

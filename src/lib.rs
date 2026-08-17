@@ -1,4 +1,5 @@
 pub mod byteparser;
+pub mod fuse_args_stack;
 use std::io;
 
 use bpf_linker::LinkerError;
@@ -31,14 +32,29 @@ pub enum SbpfLinkerError {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct ProgramOptions {
+    pub optimization: OptimizationConfig,
+    pub arch: SbpfArch,
+    pub stack_frame_size: i32,
+}
+
+impl ProgramOptions {
+    pub fn new(
+        optimization: OptimizationConfig,
+        arch: SbpfArch,
+        stack_frame_size: i32,
+    ) -> Self {
+        Self { optimization, arch, stack_frame_size }
+    }
+}
+
 pub fn link_program(
     source: &[u8],
-    opt_config: OptimizationConfig,
-    arch: SbpfArch,
+    options: ProgramOptions,
 ) -> Result<Vec<u8>, SbpfLinkerError> {
-    let parse_result = parse_bytecode(source, opt_config, arch)?;
+    let parse_result = parse_bytecode(source, options)?;
     let program = Program::from_parse_result(parse_result, None);
-    let bytecode = program.emit_bytecode();
 
-    Ok(bytecode)
+    Ok(program.emit_bytecode())
 }

@@ -1,6 +1,6 @@
 use std::{
     env,
-    ffi::CString,
+    ffi::{CStr, CString},
     fs, io,
     path::{Component, Path, PathBuf},
     str::FromStr,
@@ -20,7 +20,8 @@ use tracing_subscriber::{EnvFilter, fmt::MakeWriter, prelude::*};
 use tracing_tree::HierarchicalLayer;
 
 use sbpf_linker::{
-    OptimizationConfig, SbpfArch, SbpfLinkerError, link_program,
+    OptimizationConfig, ProgramOptions, SbpfArch, SbpfLinkerError,
+    link_program,
 };
 
 #[derive(Debug, Error)]
@@ -40,6 +41,14 @@ enum CliError {
     )]
     UnsupportedV0Cpu(Cpu),
 
+    #[error(
+        "invalid `-bpf-stack-size` value `{0}`; expected a positive value that fits in i32"
+    )]
+    InvalidStackFrameSize(String),
+    #[error(
+        "`-bpf-stack-size` is missing a value; expected `-bpf-stack-size=<value>`"
+    )]
+    MissingStackFrameSize,
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
     #[error("Program Write Error. Error detail: ({msg}).")]
@@ -310,6 +319,45 @@ fn llvm_version() -> (u32, u32, u32) {
     (major, minor, patch)
 }
 
+enum StackFrameSizeArg<'a> {
+    WithValue(&'a str),
+    MissingValue,
+}
+
+fn stack_frame_size_arg(arg: &CStr) -> Option<StackFrameSizeArg<'_>> {
+    const FLAG: &str = "bpf-stack-size";
+
+    let arg = arg.to_str().ok()?;
+    let arg = arg.strip_prefix("--").or_else(|| arg.strip_prefix('-'))?;
+    let rest = arg.strip_prefix(FLAG)?;
+
+    match rest.strip_prefix('=') {
+        Some(value) => Some(StackFrameSizeArg::WithValue(value)),
+        None => rest.is_empty().then_some(StackFrameSizeArg::MissingValue),
+    }
+}
+
+fn stack_frame_size_from_llvm_args(
+    llvm_args: &[CString],
+) -> Result<i32, CliError> {
+    let value = llvm_args
+        .iter()
+        .rev()
+        .find_map(|arg| match stack_frame_size_arg(arg)? {
+            StackFrameSizeArg::WithValue(value) => Some(value),
+            StackFrameSizeArg::MissingValue => None,
+        })
+        .expect(
+            "process_cli_options always supplies `-bpf-stack-size=<value>`",
+        );
+
+    value
+        .parse::<i32>()
+        .ok()
+        .filter(|size| *size > 0)
+        .ok_or_else(|| CliError::InvalidStackFrameSize(value.to_string()))
+}
+
 fn process_cli_options<I>(args: I) -> anyhow::Result<CommandLine>
 where
     I: Iterator<Item = String>,
@@ -348,10 +396,19 @@ where
     }
 
     let mut llvm_args = cli.llvm_args;
-    if !llvm_args
-        .iter()
-        .any(|arg| arg.as_bytes().starts_with(b"-bpf-stack-size"))
-    {
+    let mut has_stack_frame_size = false;
+    for arg in &llvm_args {
+        match stack_frame_size_arg(arg) {
+            Some(StackFrameSizeArg::WithValue(_)) => {
+                has_stack_frame_size = true
+            }
+            Some(StackFrameSizeArg::MissingValue) => {
+                return Err(CliError::MissingStackFrameSize.into());
+            }
+            None => {}
+        }
+    }
+    if !has_stack_frame_size {
         llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
     }
 
@@ -474,6 +531,8 @@ fn main() -> anyhow::Result<()> {
         [.., CliOptLevel(optimize)] => optimize,
     };
 
+    let stack_frame_size = stack_frame_size_from_llvm_args(&llvm_args)?;
+
     let mut linker = Linker::new(LinkerOptions {
         target,
         cpu,
@@ -520,7 +579,10 @@ fn main() -> anyhow::Result<()> {
     } else {
         OptimizationConfig::disabled()
     };
-    let bytecode = link_program(&program, sbpf_optimization, arch.0)?;
+    let bytecode = link_program(
+        &program,
+        ProgramOptions::new(sbpf_optimization, arch.0, stack_frame_size),
+    )?;
 
     let src_name = std::path::Path::new(&output)
         .file_stem()
@@ -760,6 +822,54 @@ mod tests {
             .map(|s| s.to_string());
         let CommandLine { cpu, .. } = process_cli_options(args).unwrap();
         assert!(matches!(cpu, Cpu::V2));
+    }
+
+    #[test]
+    fn test_bpf_stack_size_rejects_a_missing_value() {
+        for flag in ["-bpf-stack-size", "--bpf-stack-size"] {
+            let args = vec![
+                "sbpf-linker".to_string(),
+                "input.o".to_string(),
+                "-o".to_string(),
+                "/tmp/bin.o".to_string(),
+                format!("--llvm-args={flag}"),
+            ]
+            .into_iter();
+
+            let error = process_cli_options(args).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "`-bpf-stack-size` is missing a value; expected `-bpf-stack-size=<value>`"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bpf_stack_size_value_is_not_overridden_by_the_default() {
+        for flag in ["-bpf-stack-size=8192", "--bpf-stack-size=8192"] {
+            let args = vec![
+                "sbpf-linker".to_string(),
+                "input.o".to_string(),
+                "-o".to_string(),
+                "/tmp/bin.o".to_string(),
+                format!("--llvm-args={flag}"),
+            ]
+            .into_iter();
+
+            let CommandLine { llvm_args, .. } =
+                process_cli_options(args).unwrap();
+            assert_eq!(
+                llvm_args
+                    .iter()
+                    .map(|arg| arg.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                [flag]
+            );
+            assert_eq!(
+                stack_frame_size_from_llvm_args(&llvm_args).unwrap(),
+                8192
+            );
+        }
     }
 
     #[test]

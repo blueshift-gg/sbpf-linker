@@ -22,9 +22,11 @@ use sbpf_common::{
     instruction::{AsmFormat, Instruction},
     opcode::Opcode,
 };
-use sbpf_linker::byteparser::parse_bytecode;
+use sbpf_linker::{ProgramOptions, byteparser::parse_bytecode};
 
 const NO_TESTS_FILTER: &str = "__no_tests_match_this_sbpf_arch__";
+
+const DEFAULT_STACK_FRAME_SIZE: i32 = 4096;
 
 trait TestArch {
     const ARCH: SbpfArch;
@@ -250,8 +252,14 @@ fn compile_test() {
 fn render_emitted_program<A: TestArch>(path: &Path) -> anyhow::Result<String> {
     let bytes = fs::read(path)?;
     let syscall_labels = collect_syscall_labels::<A>(&bytes)?;
-    let parse_result =
-        parse_bytecode(&bytes, OptimizationConfig::enabled(), A::ARCH)?;
+    let parse_result = parse_bytecode(
+        &bytes,
+        ProgramOptions::new(
+            OptimizationConfig::enabled(),
+            A::ARCH,
+            DEFAULT_STACK_FRAME_SIZE,
+        ),
+    )?;
     let ph_count = if parse_result.prog_is_static { 1u64 } else { 3u64 };
     let rodata_base =
         parse_result.code_section.get_size() + 64 + ph_count * 56;
