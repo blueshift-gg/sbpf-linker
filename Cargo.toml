@@ -15,8 +15,8 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-sbpf-assembler = "0.2.4"
-sbpf-common = "0.2.4"
+sbpf-assembler = "0.3.0"
+sbpf-common = "0.3.0"
 clap = { workspace = true }
 either = { version = "1.16.0", features = ["serde"] }
 object = { version = "0.39.1", features = ["write"] }
@@ -47,7 +47,6 @@ name = "tests"
 path = "tests/tests.rs"
 
 [workspace]
-members = ["xtask"]
 
 [workspace.dependencies]
 anyhow = "1.0.103"

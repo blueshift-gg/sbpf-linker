@@ -177,7 +177,7 @@ struct CommandLine {
     /// Target BPF processor. Can be one of `generic`, `probe`, `v1`, `v2`, `v3`
     /// This will be ignored in sbpf linker since we want to default `cpu` to `v2` but with rustc always passing a `cpu` value
     /// We decide to add one more flag to override it
-    #[clap(long, default_value = "generic")]
+    #[clap(long, default_value = "generic", hide = true)]
     cpu: Cpu,
 
     /// Override the target-cpu attribute to expose the desired CPU features to bpf-linker
