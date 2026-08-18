@@ -5,7 +5,6 @@ version = "0.1.9"
 authors = ["Claire Fan <claire@blueshift.gg>"]
 description = "Upstream BPF linker for SBPF V0/V3 programs"
 license = "MIT"
-readme = "README.md"
 homepage = "https://github.com/blueshift-gg/sbpf-linker"
 repository = "https://github.com/blueshift-gg/sbpf-linker"
 keywords = ["cli", "sbpf", "linker", "solana"]
