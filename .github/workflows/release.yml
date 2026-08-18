@@ -9,11 +9,14 @@ on:
         description: "Version to release (e.g. 0.4.2 or v0.4.2)"
         required: true
         type: string
-      dry_run:
-        description: "Dry run: verify and package, but do not publish or create a release (default: true)"
+      mode:
+        description: "Release mode"
         required: false
-        default: true
-        type: boolean
+        default: "dry-run"
+        type: choice
+        options:
+          - dry-run
+          - release
 
 jobs:
   crates:
@@ -26,6 +29,8 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    env:
+      release_mode: ${{ github.event_name == 'push' || inputs.mode == 'release' }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,24 +58,24 @@ jobs:
       - name: Install cargo-release
         uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2.85.7
         with:
-          tool: cargo-release
+          tool: cargo-release@1.1.5
 
       - name: Authenticate with crates.io
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
 
       - name: Publish crates
-        if: inputs.dry_run != 'true'
+        if: env.release_mode == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo release --unpublished --workspace --no-tag --no-push --execute --no-confirm --allow-branch '*,HEAD'
 
       - name: Publish crates (dry run)
-        if: inputs.dry_run == 'true'
+        if: env.release_mode != 'true'
         run: cargo release --unpublished --workspace --no-tag --no-push --no-confirm --allow-branch '*,HEAD'
 
       - name: Create release
-        if: inputs.dry_run != 'true'
+        if: env.release_mode == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
