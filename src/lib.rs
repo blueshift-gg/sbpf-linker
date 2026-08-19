@@ -1,3 +1,6 @@
+#[cfg(feature = "rust-llvm")]
+use aya_rustc_llvm_proxy as _;
+
 pub mod byteparser;
 pub mod fuse_args_stack;
 use std::io;

@@ -353,7 +353,7 @@ fn build_linker(llvm_install_dir: &Path) -> Result<()> {
         ".",
         "--no-default-features",
         "--features",
-        "bpf-linker/llvm-22,bpf-linker/llvm-link-static",
+        "bpf-linker/llvm-23,bpf-linker/llvm-link-static",
         "--force",
     ])
     .env("LLVM_PREFIX", llvm_install_dir)
