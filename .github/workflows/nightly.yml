@@ -1,0 +1,118 @@
+name: Nightly compatibility
+
+on:
+  schedule:
+    # Pacific midnight is 07:00 UTC during PDT and 08:00 UTC during PST.
+    # The timing job filters out the trigger that is not midnight locally.
+    - cron: "0 7 * * *"
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-compatibility
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: read
+  pull-requests: write
+
+jobs:
+  timing:
+    name: Resolve Pacific schedule
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.clock.outputs.run }}
+      propose: ${{ steps.clock.outputs.propose }}
+    steps:
+      - name: Check local time and update cadence
+        id: clock
+        env:
+          TZ: America/Los_Angeles
+        shell: bash
+        run: |
+          run=false
+          propose=false
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            run=true
+            propose=true
+          elif [[ "$(date +%H)" == "00" ]]; then
+            run=true
+            if [[ "$(date +%u)" == "6" ]]; then
+              propose=true
+            fi
+          fi
+
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "propose=$propose" >> "$GITHUB_OUTPUT"
+
+  update:
+    name: Test and propose latest nightly
+    needs: timing
+    if: needs.timing.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Resolve latest nightly
+        id: nightly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          commit_date=$(rustc --version --verbose | sed -n 's/^commit-date: //p')
+          test -n "$commit_date"
+
+          echo "toolchain=nightly-${commit_date}" >> "$GITHUB_OUTPUT"
+          rustc --version --verbose
+
+      - name: Install from source
+        run: >-
+          cargo install --path . --locked
+          --root target/latest-nightly-install
+
+      - name: Load nightly LLVM through the proxy
+        run: >-
+          rustup run nightly
+          target/latest-nightly-install/bin/sbpf-linker --version
+
+      - name: Update pinned nightly
+        if: needs.timing.outputs.propose == 'true'
+        env:
+          CANDIDATE: ${{ steps.nightly.outputs.toolchain }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current=$(sed -n 's/^  RUST_TOOLCHAIN: //p' .github/workflows/ci.yml)
+          test -n "$current"
+
+          if [[ "$CANDIDATE" > "$current" ]]; then
+            sed -i "s/^  RUST_TOOLCHAIN: .*/  RUST_TOOLCHAIN: ${CANDIDATE}/" \
+              .github/workflows/ci.yml
+          else
+            echo "Pinned nightly ${current} is already current."
+          fi
+
+      - name: Create nightly update pull request
+        if: needs.timing.outputs.propose == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          add-paths: .github/workflows/ci.yml
+          branch: automation/update-rust-nightly
+          delete-branch: true
+          commit-message: >-
+            ci: update pinned nightly to ${{ steps.nightly.outputs.toolchain }}
+          title: >-
+            ci: update pinned nightly to ${{ steps.nightly.outputs.toolchain }}
+          body: |
+            The daily compatibility check passed with `${{ steps.nightly.outputs.toolchain }}`.
+
+            This updates the reproducible CI baseline to that nightly.
