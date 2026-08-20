@@ -53,6 +53,9 @@ jobs:
     if: needs.timing.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
+      # Note: this workflow must not modify files under .github/workflows/.
+      # GITHUB_TOKEN cannot push workflow-file changes; the pinned nightly
+      # lives in nightly-version.txt, so the built-in token is sufficient.
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@master
@@ -91,12 +94,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          current=$(sed -n 's/^  RUST_TOOLCHAIN: //p' .github/workflows/ci.yml)
+          current=$(cat nightly-version.txt)
           test -n "$current"
 
           if [[ "$CANDIDATE" > "$current" ]]; then
-            sed -i "s/^  RUST_TOOLCHAIN: .*/  RUST_TOOLCHAIN: ${CANDIDATE}/" \
-              .github/workflows/ci.yml
+            echo "$CANDIDATE" > nightly-version.txt
           else
             echo "Pinned nightly ${current} is already current."
           fi
@@ -105,7 +107,7 @@ jobs:
         if: needs.timing.outputs.propose == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          add-paths: .github/workflows/ci.yml
+          add-paths: nightly-version.txt
           branch: automation/update-rust-nightly
           delete-branch: true
           commit-message: >-

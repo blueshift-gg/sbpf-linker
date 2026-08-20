@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_TOOLCHAIN: nightly-2026-08-18
 
 permissions:
   contents: read
@@ -50,9 +49,12 @@ jobs:
           - macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve pinned nightly
+        id: pinned
+        run: echo "toolchain=$(cat nightly-version.txt)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          toolchain: ${{ steps.pinned.outputs.toolchain }}
       - uses: Swatinem/rust-cache@v2
       - name: Install from source using Rust's LLVM
         run: >-
@@ -60,7 +62,7 @@ jobs:
           --root target/cargo-install
       - name: Verify installed binary
         run: |
-          output=$(rustup run "$RUST_TOOLCHAIN" \
+          output=$(rustup run "${{ steps.pinned.outputs.toolchain }}" \
             target/cargo-install/bin/sbpf-linker --version)
           echo "$output"
           grep -F "LLVM 23" <<< "$output"
@@ -81,9 +83,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve pinned nightly
+        id: pinned
+        run: echo "toolchain=$(cat nightly-version.txt)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          toolchain: ${{ steps.pinned.outputs.toolchain }}
           components: rust-src
       - uses: Swatinem/rust-cache@v2
       - name: Install FileCheck
@@ -96,9 +101,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve pinned nightly
+        id: pinned
+        run: echo "toolchain=$(cat nightly-version.txt)" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          toolchain: ${{ steps.pinned.outputs.toolchain }}
           components: rust-src, llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
