@@ -7,29 +7,130 @@ on:
     tags: ["v*"]
 
 jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve and verify version
+        id: version
+        run: |
+          set -euo pipefail
+
+          tag="v${GITHUB_REF_NAME#v}"
+          version=$(yq -e '.package.version' Cargo.toml)
+          test "$tag" = "v$version" \
+            || { echo "::error::tag ${tag} does not match Cargo.toml version v${version}"; exit 1; }
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  binaries:
+    name: Binary (${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          cache: false
+          rustflags: ""
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Restore pinned LLVM
+        env:
+          LLVM_COMMIT: 21cf28432798952d942bacc6bcee3a328faa3638
+          LLVM_BUILD_REV: "4"
+        run: |
+          set -euo pipefail
+
+          artifact_dir="$RUNNER_TEMP/llvm-artifact-$TARGET"
+          llvm_dir="$RUNNER_TEMP/llvm-$TARGET"
+          ref="ghcr.io/aya-rs/llvm:${LLVM_COMMIT}-${TARGET}-${LLVM_BUILD_REV}"
+
+          mkdir -p "$artifact_dir" "$llvm_dir"
+          oras pull "$ref" --output "$artifact_dir"
+          tar --zstd -xpf "$artifact_dir/llvm-archive-${TARGET}.tar.zst" -C "$llvm_dir"
+
+          echo "LLVM_PREFIX=$llvm_dir" >> "$GITHUB_ENV"
+          echo "CXXSTDLIB=libcxx,libcxxabi" >> "$GITHUB_ENV"
+          echo "CXXSTDLIB_PATH=$llvm_dir/lib" >> "$GITHUB_ENV"
+          echo "ZLIB_PATH=$llvm_dir/lib" >> "$GITHUB_ENV"
+          echo "LIBZSTD_PATH=$llvm_dir/lib" >> "$GITHUB_ENV"
+
+      - name: Build static binary
+        run: |
+          cargo build \
+            --release \
+            --locked \
+            --bin sbpf-linker \
+            --target "$TARGET" \
+            --no-default-features \
+            --features bpf-linker/llvm-23,bpf-linker/llvm-link-static
+
+      - name: Package binary
+        run: |
+          set -euo pipefail
+
+          binary="target/${TARGET}/release/sbpf-linker"
+          "$binary" --version
+
+          mkdir -p dist
+          tar -czf "dist/sbpf-linker-${TARGET}.tar.gz" \
+            -C "$(dirname "$binary")" "$(basename "$binary")"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sbpf-linker-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
   crates:
     name: Publish crates
+    needs: binaries
     runs-on: ubuntu-latest
     concurrency:
       group: release-crates
       cancel-in-progress: false
     environment: release
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Verify tag matches Cargo.toml version
-        run: |
-          v=$(yq -e '.package.version' Cargo.toml)
-          tag="v${GITHUB_REF_NAME#v}"
-          test "$tag" = "v$v" \
-            || { echo "::error::tag ${tag} does not match Cargo.toml version v$v"; exit 1; }
-          echo "tag=$tag" >> "$GITHUB_ENV"
 
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
@@ -52,12 +153,33 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo release --unpublished --workspace --no-tag --no-push --execute --no-confirm --allow-branch '*,HEAD'
 
-      - name: Publish release
+  release:
+    name: Publish GitHub release
+    needs:
+      - prepare
+      - crates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download binary artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: sbpf-linker-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum sbpf-linker-*.tar.gz > SHA256SUMS
+
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          tag="${{ needs.prepare.outputs.tag }}"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists; skipping creation"
+            gh release upload "$tag" dist/* --clobber
           else
-            gh release create "$tag" --generate-notes
+            gh release create "$tag" dist/* --generate-notes
           fi
