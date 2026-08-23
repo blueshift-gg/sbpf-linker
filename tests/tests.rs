@@ -258,6 +258,7 @@ fn render_emitted_program<A: TestArch>(path: &Path) -> anyhow::Result<String> {
             OptimizationConfig::enabled(),
             A::ARCH,
             DEFAULT_STACK_FRAME_SIZE,
+            matches!(A::ARCH, SbpfArch::V0),
         ),
     )?;
     let ph_count = if parse_result.prog_is_static { 1u64 } else { 3u64 };
