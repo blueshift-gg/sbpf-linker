@@ -53,9 +53,6 @@ jobs:
     if: needs.timing.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
-      # Note: this workflow must not modify files under .github/workflows/.
-      # GITHUB_TOKEN cannot push workflow-file changes; the pinned nightly
-      # lives in nightly-version.txt, so the built-in token is sufficient.
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@master
