@@ -2,10 +2,8 @@ name: Nightly compatibility
 
 on:
   schedule:
-    # Pacific midnight is 07:00 UTC during PDT and 08:00 UTC during PST.
-    # The timing job filters out the trigger that is not midnight locally.
-    - cron: "0 7 * * *"
-    - cron: "0 8 * * *"
+    - cron: "0 4 * * *"
+      timezone: "America/New_York"
   workflow_dispatch:
 
 concurrency:
@@ -19,38 +17,30 @@ permissions:
 
 jobs:
   timing:
-    name: Resolve Pacific schedule
+    name: Resolve update cadence
     runs-on: ubuntu-latest
     outputs:
-      run: ${{ steps.clock.outputs.run }}
       propose: ${{ steps.clock.outputs.propose }}
     steps:
-      - name: Check local time and update cadence
+      - name: Check update cadence
         id: clock
         env:
-          TZ: America/Los_Angeles
+          TZ: America/New_York
         shell: bash
         run: |
-          run=false
           propose=false
 
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            run=true
             propose=true
-          elif [[ "$(date +%H)" == "00" ]]; then
-            run=true
-            if [[ "$(date +%u)" == "6" ]]; then
-              propose=true
-            fi
+          elif [[ "$(date +%u)" == "6" ]]; then
+            propose=true
           fi
 
-          echo "run=$run" >> "$GITHUB_OUTPUT"
           echo "propose=$propose" >> "$GITHUB_OUTPUT"
 
   update:
     name: Test and propose latest nightly
     needs: timing
-    if: needs.timing.outputs.run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
