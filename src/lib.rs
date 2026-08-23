@@ -40,6 +40,7 @@ pub struct ProgramOptions {
     pub optimization: OptimizationConfig,
     pub arch: SbpfArch,
     pub stack_frame_size: i32,
+    pub stack_frame_gaps: bool,
 }
 
 impl ProgramOptions {
@@ -47,8 +48,9 @@ impl ProgramOptions {
         optimization: OptimizationConfig,
         arch: SbpfArch,
         stack_frame_size: i32,
+        stack_frame_gaps: bool,
     ) -> Self {
-        Self { optimization, arch, stack_frame_size }
+        Self { optimization, arch, stack_frame_size, stack_frame_gaps }
     }
 }
 

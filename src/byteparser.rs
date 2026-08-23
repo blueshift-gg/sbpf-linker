@@ -45,7 +45,12 @@ pub fn parse_bytecode(
     bytes: &[u8],
     options: ProgramOptions,
 ) -> Result<ProgramLayout, SbpfLinkerError> {
-    let ProgramOptions { optimization, arch, stack_frame_size } = options;
+    let ProgramOptions {
+        optimization,
+        arch,
+        stack_frame_size,
+        stack_frame_gaps,
+    } = options;
     let mut ast = AST::new();
 
     let obj = File::parse(bytes)?;
@@ -440,7 +445,7 @@ pub fn parse_bytecode(
         );
     }
 
-    rewrite_r11_stack_args(&mut ast, stack_frame_size)
+    rewrite_r11_stack_args(&mut ast, stack_frame_size, stack_frame_gaps)
         .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })?;
 
     let mut parse_result = build_program(ast, arch, optimization)
