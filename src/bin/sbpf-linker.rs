@@ -40,9 +40,6 @@ enum CliError {
         "sBPF architecture `v0` only supports CPU architectures `generic`, `v1`, or `v2` (instead was `{0}`)"
     )]
     UnsupportedV0Cpu(Cpu),
-    #[error("`--enable-stack-frame-gaps` is only supported with `--arch=v0`")]
-    StackFrameGapsRequireV0,
-
     #[error(
         "invalid `-bpf-stack-size` value `{0}`; expected a positive value that fits in i32"
     )]
@@ -263,17 +260,6 @@ struct CommandLine {
     #[clap(long, default_value = "v3")]
     arch: CliArch,
 
-    /// Enable pre-SIMD-0460 stack-frame gaps (sBPF v0 only).
-    #[clap(
-        long,
-        action = clap::ArgAction::Set,
-        num_args = 0..=1,
-        default_missing_value = "true",
-        default_value_t = false,
-        default_value_if("arch", "v0", "true")
-    )]
-    enable_stack_frame_gaps: bool,
-
     /// Extra command line arguments to pass to LLVM
     #[clap(long, value_name = "args", use_value_delimiter = true, action = clap::ArgAction::Append)]
     llvm_args: Vec<CString>,
@@ -426,9 +412,6 @@ where
     }
 
     let cpu = cli.override_cpu_flag.unwrap();
-    if cli.enable_stack_frame_gaps && !matches!(cli.arch.0, SbpfArch::V0) {
-        return Err(CliError::StackFrameGapsRequireV0.into());
-    }
     if matches!(cli.arch.0, SbpfArch::V0)
         && !matches!(cpu, Cpu::Generic | Cpu::V1 | Cpu::V2)
     {
@@ -455,7 +438,6 @@ where
         dump_cfg_dir: cli.dump_cfg_dir,
         sbpf_optimize: cli.sbpf_optimize,
         arch: cli.arch,
-        enable_stack_frame_gaps: cli.enable_stack_frame_gaps,
         llvm_args,
         disable_expand_memcpy_in_order: cli.disable_expand_memcpy_in_order,
         disable_memory_builtins: cli.disable_memory_builtins,
@@ -491,7 +473,6 @@ fn main() -> anyhow::Result<()> {
         dump_cfg_dir,
         sbpf_optimize,
         arch,
-        enable_stack_frame_gaps,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
         mut inputs,
@@ -599,12 +580,7 @@ fn main() -> anyhow::Result<()> {
     };
     let bytecode = link_program(
         &program,
-        ProgramOptions::new(
-            sbpf_optimization,
-            arch.0,
-            stack_frame_size,
-            enable_stack_frame_gaps,
-        ),
+        ProgramOptions::new(sbpf_optimization, arch.0, stack_frame_size),
     )?;
 
     let src_name = std::path::Path::new(&output)
@@ -913,39 +889,5 @@ mod tests {
                 "sBPF architecture `v0` only supports CPU architectures"
             ));
         }
-    }
-
-    #[test]
-    fn test_stack_frame_gaps_require_sbpf_v0() {
-        let unsupported = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--enable-stack-frame-gaps",
-        ]
-        .into_iter()
-        .map(str::to_string);
-
-        let error = process_cli_options(unsupported).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "`--enable-stack-frame-gaps` is only supported with `--arch=v0`"
-        );
-
-        let supported = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--arch=v0",
-            "--enable-stack-frame-gaps",
-        ]
-        .into_iter()
-        .map(str::to_string);
-
-        let CommandLine { enable_stack_frame_gaps, .. } =
-            process_cli_options(supported).unwrap();
-        assert!(enable_stack_frame_gaps);
     }
 }
