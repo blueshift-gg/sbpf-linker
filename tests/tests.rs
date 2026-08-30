@@ -89,9 +89,14 @@ where
     F: Fn(&mut compiletest_rs::Config),
 {
     let arch_arg = A::arch_arg();
+    let cpu = match A::ARCH {
+        SbpfArch::V0 => "v2",
+        SbpfArch::V3 => "v4",
+    };
     let target_rustcflags = format!(
-        "-C linker={} -C link-arg=--arch={} --sysroot {}",
+        "-C linker={} -C target-cpu={} -C target-feature=+allows-misaligned-mem-access -C link-arg=--arch={} -C link-arg=--llvm-args=--bpf-stack-size=4096 --sysroot {}",
         env!("CARGO_BIN_EXE_sbpf-linker"),
+        cpu,
         arch_arg,
         sysroot.display()
     );
