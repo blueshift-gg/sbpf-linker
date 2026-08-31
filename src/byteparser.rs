@@ -35,10 +35,18 @@ fn decode_instruction_for_arch(
 // address and fill anonymous gaps before the AST is built.
 struct RodataEntry {
     section_index: SectionIndex,
+    // Offset within the original input section
     address: u64,
+    // Offset within the combined rodata section in the output
+    address_out: u64,
     size: u64,
     name: String,
     bytes: Vec<Number>,
+}
+
+enum ResolvedTarget {
+    Rodata { offset: u64 },
+    Text { offset: u64 },
 }
 
 pub fn parse_bytecode(
@@ -109,6 +117,7 @@ pub fn parse_bytecode(
             pending_rodata.push(RodataEntry {
                 section_index: ro_section.index(),
                 address: symbol.address(),
+                address_out: 0,
                 size: symbol.size(),
                 name: symbol.name().unwrap().to_owned(),
                 bytes,
@@ -178,6 +187,7 @@ pub fn parse_bytecode(
                 synthetic_rodata.push(RodataEntry {
                     section_index: *section_index,
                     address: cursor,
+                    address_out: 0,
                     size: entry.address - cursor,
                     name: format!(
                         ".rodata.__anon_{:#x}_{:#x}",
@@ -197,6 +207,7 @@ pub fn parse_bytecode(
             synthetic_rodata.push(RodataEntry {
                 section_index: *section_index,
                 address: cursor,
+                address_out: 0,
                 size: section_size - cursor,
                 name: format!(
                     ".rodata.__anon_{:#x}_{:#x}",
@@ -210,7 +221,167 @@ pub fn parse_bytecode(
     pending_rodata.extend(synthetic_rodata);
     pending_rodata.sort_by_key(|e| (e.section_index.0, e.address));
 
-    let mut rodata_offset = 0u64;
+    // Calculate each rodata entry's output offset.
+    let mut rodata_size = 0u64;
+    for entry in &mut pending_rodata {
+        entry.address_out = rodata_size;
+        rodata_size += entry.size;
+    }
+
+    // Function to resolve an input section address to it's offset in the output rodata.
+    let resolve_rodata_output_offset =
+        |section: SectionIndex, input_address: u64| {
+            pending_rodata.iter().find_map(|entry| {
+                (entry.section_index == section
+                    && (entry.address..entry.address + entry.size)
+                        .contains(&input_address))
+                .then(|| entry.address_out + (input_address - entry.address))
+            })
+        };
+
+    // Map each rodata relocation to its output offset and target label.
+    let mut rodata_target_labels: HashMap<u64, String> = HashMap::new();
+    for (section_index, ro_section) in &ro_sections {
+        let section_name = ro_section.name().unwrap_or("<invalid>");
+        let section_data = ro_section.data()?;
+        for (relocation_address, rel) in ro_section.relocations() {
+            let Symbol(symbol_index) = rel.target() else {
+                return Err(SbpfLinkerError::RodataRelocationError {
+                    section: section_name.to_owned(),
+                    address: relocation_address,
+                    detail: "invalid relocation target".to_owned(),
+                });
+            };
+            let symbol = obj.symbol_by_index(symbol_index)?;
+            let target_section = symbol.section_index().ok_or_else(|| {
+                SbpfLinkerError::RodataRelocationError {
+                    section: section_name.to_owned(),
+                    address: relocation_address,
+                    detail: "relocation target has no section".to_owned(),
+                }
+            })?;
+            let addend = if rel.has_implicit_addend() {
+                let stored = section_data
+                    .get(
+                        relocation_address as usize
+                            ..relocation_address as usize + 8,
+                    )
+                    .ok_or_else(|| SbpfLinkerError::RodataRelocationError {
+                        section: section_name.to_owned(),
+                        address: relocation_address,
+                        detail: "relocation location out of bounds".to_owned(),
+                    })?;
+                i64::from_le_bytes(stored.try_into().unwrap())
+            } else {
+                rel.addend()
+            };
+            let relocation_offset = resolve_rodata_output_offset(
+                *section_index,
+                relocation_address,
+            )
+            .ok_or_else(|| {
+                SbpfLinkerError::RodataRelocationError {
+                    section: section_name.to_owned(),
+                    address: relocation_address,
+                    detail: "relocation location is not rodata".to_owned(),
+                }
+            })?;
+
+            let target = symbol.address().wrapping_add(addend as u64);
+
+            // Find the relocation target (in rodata or text section).
+            let resolved_target = if let Some(offset) =
+                resolve_rodata_output_offset(target_section, target)
+            {
+                ResolvedTarget::Rodata { offset }
+            } else {
+                let text_base = text_section_bases
+                    .get(&target_section)
+                    .copied()
+                    .ok_or_else(|| SbpfLinkerError::RodataRelocationError {
+                        section: section_name.to_owned(),
+                        address: relocation_address,
+                        detail: "relocation target is not rodata or text"
+                            .to_owned(),
+                    })?;
+                let offset = text_base
+                    .checked_add(target)
+                    .filter(|offset| *offset < text_size)
+                    .ok_or_else(|| SbpfLinkerError::RodataRelocationError {
+                        section: section_name.to_owned(),
+                        address: relocation_address,
+                        detail: "relocation target is not rodata or text"
+                            .to_owned(),
+                    })?;
+
+                ResolvedTarget::Text { offset }
+            };
+
+            // Get or create a label for the target.
+            let target_name = match resolved_target {
+                ResolvedTarget::Rodata { offset } => {
+                    let entry = pending_rodata
+                        .iter()
+                        .find(|entry| {
+                            (entry.address_out..entry.address_out + entry.size)
+                                .contains(&offset)
+                        })
+                        .ok_or_else(|| {
+                            SbpfLinkerError::RodataRelocationError {
+                                section: section_name.to_owned(),
+                                address: relocation_address,
+                                detail: "relocation target is not rodata"
+                                    .to_owned(),
+                            }
+                        })?;
+
+                    if entry.address_out == offset {
+                        entry.name.clone()
+                    } else if let Some(name) =
+                        rodata_target_labels.get(&offset)
+                    {
+                        name.clone()
+                    } else {
+                        let name = format!(".rodata.__at__{offset:#x}");
+                        ast.rodata_nodes.push(ASTNode::ROData {
+                            rodata: ROData {
+                                name: name.clone(),
+                                args: vec![
+                                    Token::Directive(
+                                        String::from("byte"),
+                                        0..1,
+                                    ),
+                                    Token::VectorLiteral(Vec::new(), 0..1),
+                                ],
+                                span: 0..1,
+                            },
+                            offset,
+                        });
+                        rodata_target_labels.insert(offset, name.clone());
+                        name
+                    }
+                }
+                ResolvedTarget::Text { offset } => {
+                    if let Some(name) = labels_by_offset.get(&offset) {
+                        name.clone()
+                    } else {
+                        let name = synthetic_labels_by_offset
+                            .entry(offset)
+                            .or_insert_with(|| {
+                                format!(".text.__at__{offset:#x}")
+                            })
+                            .clone();
+                        labels_by_offset.insert(offset, name.clone());
+                        name
+                    }
+                }
+            };
+
+            // Add the relocation to the AST.
+            ast.add_rodata_relocation(relocation_offset, target_name);
+        }
+    }
+
     for entry in pending_rodata {
         ast.rodata_nodes.push(ASTNode::ROData {
             rodata: ROData {
@@ -221,15 +392,14 @@ pub fn parse_bytecode(
                 ],
                 span: 0..1,
             },
-            offset: rodata_offset,
+            offset: entry.address_out,
         });
         rodata_table
             .insert((Some(entry.section_index), entry.address), entry.name);
-        rodata_offset += entry.size;
     }
 
     let mut debug_sections = Vec::default();
-    ast.set_rodata_size(rodata_offset);
+    ast.set_rodata_size(rodata_size);
 
     for section in obj.sections() {
         if let Some(section_base) = text_section_bases.get(&section.index()) {
