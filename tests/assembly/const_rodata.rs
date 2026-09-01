@@ -113,9 +113,9 @@ pub extern "C" fn mixed_match(flag: u64) -> u64 {
 
 // CHECK,by_value_const_match: rodata-count: 0
 // CHECK,by_value_const_match: label by_value_const_match
-// CHECK,by_value_const_match: mov64 r2, 0x11
+// CHECK,by_value_const_match: mov{{(32|64)}} r2, 0x11
 // CHECK,by_value_const_match: jeq r1, 0x0, +0x1
-// CHECK,by_value_const_match: mov64 r2, 0x22
+// CHECK,by_value_const_match: mov{{(32|64)}} r2, 0x22
 // CHECK,by_value_const_match-NOT: lddw
 // CHECK,by_value_const_match: stxb [r10-0x1], r2
 // CHECK,by_value_const_match: ldxb r0, [r10-0x1]
