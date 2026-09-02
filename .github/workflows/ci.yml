@@ -120,10 +120,8 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # The harness normally builds this sysroot itself. '
-      # Build it first so host coverage flags do not reach the nested bpfel Cargo build.  
-      # TODO: if ci duration becomes an issue, extract sysroot creation into an xtask command to avoid running
-      # the compile-test suite twice.
+      # The harness normally builds this sysroot itself.
+      # Build it first so host coverage flags do not reach the nested bpfel Cargo build.
       - name: Build BPF sysroot
         run: cargo test --test tests compile_test -- --nocapture
 
