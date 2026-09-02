@@ -1020,7 +1020,7 @@ dependencies = [
 [[package]]
 name = "sbpf-analyze"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "sbpf-common",
  "sbpf-ir",
@@ -1030,7 +1030,7 @@ dependencies = [
 [[package]]
 name = "sbpf-assembler"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1054,7 +1054,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "either",
  "num-derive",
@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common-derive"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1080,7 +1080,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common-tablegen"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1090,7 +1090,7 @@ dependencies = [
 [[package]]
 name = "sbpf-ir"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1123,7 +1123,7 @@ dependencies = [
 [[package]]
 name = "sbpf-syscall-map"
 version = "0.3.0"
-source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#a8790f84feabe3922213e71e329804c5bc7d9e88"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 
 [[package]]
 name = "scopeguard"

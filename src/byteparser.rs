@@ -240,20 +240,19 @@ pub fn parse_bytecode(
         let section_name = ro_section.name().unwrap_or("<invalid>");
         let section_data = ro_section.data()?;
         for (relocation_address, rel) in ro_section.relocations() {
-            let Symbol(symbol_index) = rel.target() else {
-                return Err(SbpfLinkerError::RodataRelocationError {
+            let relocation_error =
+                |detail: &str| SbpfLinkerError::RodataRelocationError {
                     section: section_name.to_owned(),
                     address: relocation_address,
-                    detail: "invalid relocation target".to_owned(),
-                });
+                    detail: detail.to_owned(),
+                };
+
+            let Symbol(symbol_index) = rel.target() else {
+                return Err(relocation_error("invalid relocation target"));
             };
             let symbol = obj.symbol_by_index(symbol_index)?;
             let target_section = symbol.section_index().ok_or_else(|| {
-                SbpfLinkerError::RodataRelocationError {
-                    section: section_name.to_owned(),
-                    address: relocation_address,
-                    detail: "relocation target has no section".to_owned(),
-                }
+                relocation_error("relocation target has no section")
             })?;
             let addend = if rel.has_implicit_addend() {
                 let stored = section_data
@@ -261,10 +260,8 @@ pub fn parse_bytecode(
                         relocation_address as usize
                             ..relocation_address as usize + 8,
                     )
-                    .ok_or_else(|| SbpfLinkerError::RodataRelocationError {
-                        section: section_name.to_owned(),
-                        address: relocation_address,
-                        detail: "relocation location out of bounds".to_owned(),
+                    .ok_or_else(|| {
+                        relocation_error("relocation location out of bounds")
                     })?;
                 i64::from_le_bytes(stored.try_into().unwrap())
             } else {
@@ -275,11 +272,7 @@ pub fn parse_bytecode(
                 relocation_address,
             )
             .ok_or_else(|| {
-                SbpfLinkerError::RodataRelocationError {
-                    section: section_name.to_owned(),
-                    address: relocation_address,
-                    detail: "relocation location is not rodata".to_owned(),
-                }
+                relocation_error("relocation location is not rodata")
             })?;
 
             let target = symbol.address().wrapping_add(addend as u64);
@@ -293,20 +286,18 @@ pub fn parse_bytecode(
                 let text_base = text_section_bases
                     .get(&target_section)
                     .copied()
-                    .ok_or_else(|| SbpfLinkerError::RodataRelocationError {
-                        section: section_name.to_owned(),
-                        address: relocation_address,
-                        detail: "relocation target is not rodata or text"
-                            .to_owned(),
+                    .ok_or_else(|| {
+                        relocation_error(
+                            "relocation target is not rodata or text",
+                        )
                     })?;
                 let offset = text_base
                     .checked_add(target)
                     .filter(|offset| *offset < text_size)
-                    .ok_or_else(|| SbpfLinkerError::RodataRelocationError {
-                        section: section_name.to_owned(),
-                        address: relocation_address,
-                        detail: "relocation target is not rodata or text"
-                            .to_owned(),
+                    .ok_or_else(|| {
+                        relocation_error(
+                            "relocation target is not rodata or text",
+                        )
                     })?;
 
                 ResolvedTarget::Text { offset }
@@ -322,12 +313,7 @@ pub fn parse_bytecode(
                                 .contains(&offset)
                         })
                         .ok_or_else(|| {
-                            SbpfLinkerError::RodataRelocationError {
-                                section: section_name.to_owned(),
-                                address: relocation_address,
-                                detail: "relocation target is not rodata"
-                                    .to_owned(),
-                            }
+                            relocation_error("relocation target is not rodata")
                         })?;
 
                     if entry.address_out == offset {

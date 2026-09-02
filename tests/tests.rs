@@ -453,18 +453,21 @@ fn render_rodata_relocations<A: TestArch>(
                 let ASTNode::ROData { rodata, offset } = node else {
                     continue;
                 };
-                let symbol = obj
-                    .symbols()
-                    .find(|symbol| {
-                        symbol.name().is_ok_and(|name| name == rodata.name)
-                            && symbol.section_index().is_some()
-                    })
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "no symbol found for rodata: {}",
-                            rodata.name
-                        )
-                    })?;
+                let symbol = obj.symbols().find(|symbol| {
+                    symbol.name().is_ok_and(|name| name == rodata.name)
+                        && symbol.section_index().is_some()
+                });
+
+                let Some(symbol) = symbol else {
+                    if rodata.name.starts_with(".rodata.__at__") {
+                        continue;
+                    }
+
+                    return Err(anyhow::anyhow!(
+                        "no symbol found for rodata: {}",
+                        rodata.name
+                    ));
+                };
                 let section_index = symbol.section_index().unwrap().0;
                 let address = symbol.address();
                 if section_index != section.index().0 {
