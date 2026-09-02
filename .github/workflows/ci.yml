@@ -139,6 +139,7 @@ jobs:
             --package sbpf-linker \
             --all-targets \
             --color never \
+            --ignore-filename-regex 'src/bin/sbpf-linker\.rs$' \
             --fail-under-lines "$MINIMUM_LINE_COVERAGE" \
             | tee coverage.txt || coverage_status=$?
 

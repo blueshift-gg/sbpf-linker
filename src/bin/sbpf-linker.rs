@@ -40,16 +40,11 @@ enum CliError {
         "sBPF architecture `v0` only supports CPU architectures `generic`, `v1`, or `v2` (instead was `{0}`)"
     )]
     UnsupportedV0Cpu(Cpu),
-    #[error("`--enable-stack-frame-gaps` is only supported with `--arch=v0`")]
-    StackFrameGapsRequireV0,
-
     #[error(
-        "invalid `-bpf-stack-size` value `{0}`; expected a positive value that fits in i32"
+        "invalid `--bpf-stack-size` value `{0}`; expected a positive value that fits in i32"
     )]
     InvalidStackFrameSize(String),
-    #[error(
-        "`-bpf-stack-size` is missing a value; expected `-bpf-stack-size=<value>`"
-    )]
+    #[error("missing required `--bpf-stack-size=<value>` LLVM argument")]
     MissingStackFrameSize,
     #[error("SBPF Linker Error. Error detail: ({0}).")]
     SbpfLinkerError(#[from] SbpfLinkerError),
@@ -176,17 +171,12 @@ struct CommandLine {
     #[clap(long)]
     target: Option<CString>,
 
-    /// Target BPF processor. Can be one of `generic`, `probe`, `v1`, `v2`, `v3`
-    /// This will be ignored in sbpf linker since we want to default `cpu` to `v2` but with rustc always passing a `cpu` value
-    /// We decide to add one more flag to override it
-    #[clap(long, default_value = "generic")]
+    /// Target BPF processor. Can be one of `generic`, `probe`, `v1`, `v2`, `v3`, `v4`.
+    /// Rustc forwards this from `-C target-cpu`; direct invocations default to `v2`.
+    #[clap(long, default_value = "v2")]
     cpu: Cpu,
 
-    /// Override the target-cpu attribute to expose the desired CPU features to bpf-linker
-    #[clap(long, default_value = "v2")]
-    override_cpu_flag: Option<Cpu>,
-
-    /// Enable or disable CPU features. The available features are: alu32, dummy, dwarfris.
+    /// Enable or disable CPU features. Rustc forwards this from `-C target-feature`.
     /// Use +feature to enable a feature, or -feature to disable it. For example
     /// --cpu-features=+allows-misaligned-mem-access,+alu32,-dwarfris
     #[clap(
@@ -263,17 +253,6 @@ struct CommandLine {
     #[clap(long, default_value = "v3")]
     arch: CliArch,
 
-    /// Enable pre-SIMD-0460 stack-frame gaps (sBPF v0 only).
-    #[clap(
-        long,
-        action = clap::ArgAction::Set,
-        num_args = 0..=1,
-        default_missing_value = "true",
-        default_value_t = false,
-        default_value_if("arch", "v0", "true")
-    )]
-    enable_stack_frame_gaps: bool,
-
     /// Extra command line arguments to pass to LLVM
     #[clap(long, value_name = "args", use_value_delimiter = true, action = clap::ArgAction::Append)]
     llvm_args: Vec<CString>,
@@ -321,56 +300,6 @@ where
         .with_writer(writer)
 }
 
-fn llvm_version() -> (u32, u32, u32) {
-    let (mut major, mut minor, mut patch) = (0, 0, 0);
-    // SAFETY: LLVMGetVersion only writes to the three valid output pointers.
-    unsafe {
-        bpf_linker::llvm_sys::core::LLVMGetVersion(
-            &mut major, &mut minor, &mut patch,
-        );
-    }
-    (major, minor, patch)
-}
-
-enum StackFrameSizeArg<'a> {
-    WithValue(&'a str),
-    MissingValue,
-}
-
-fn stack_frame_size_arg(arg: &CStr) -> Option<StackFrameSizeArg<'_>> {
-    const FLAG: &str = "bpf-stack-size";
-
-    let arg = arg.to_str().ok()?;
-    let arg = arg.strip_prefix("--").or_else(|| arg.strip_prefix('-'))?;
-    let rest = arg.strip_prefix(FLAG)?;
-
-    match rest.strip_prefix('=') {
-        Some(value) => Some(StackFrameSizeArg::WithValue(value)),
-        None => rest.is_empty().then_some(StackFrameSizeArg::MissingValue),
-    }
-}
-
-fn stack_frame_size_from_llvm_args(
-    llvm_args: &[CString],
-) -> Result<i32, CliError> {
-    let value = llvm_args
-        .iter()
-        .rev()
-        .find_map(|arg| match stack_frame_size_arg(arg)? {
-            StackFrameSizeArg::WithValue(value) => Some(value),
-            StackFrameSizeArg::MissingValue => None,
-        })
-        .expect(
-            "process_cli_options always supplies `-bpf-stack-size=<value>`",
-        );
-
-    value
-        .parse::<i32>()
-        .ok()
-        .filter(|size| *size > 0)
-        .ok_or_else(|| CliError::InvalidStackFrameSize(value.to_string()))
-}
-
 fn process_cli_options<I>(args: I) -> anyhow::Result<CommandLine>
 where
     I: Iterator<Item = String>,
@@ -384,87 +313,26 @@ where
             }
             ErrorKind::DisplayVersion => {
                 print!("{err}");
-                let (major, minor, patch) = llvm_version();
+                let (mut major, mut minor, mut patch) = (0, 0, 0);
+                // SAFETY: LLVMGetVersion only writes to the three valid output pointers.
+                unsafe {
+                    bpf_linker::llvm_sys::core::LLVMGetVersion(
+                        &mut major, &mut minor, &mut patch,
+                    );
+                }
                 println!("LLVM {major}.{minor}.{patch}");
                 std::process::exit(0);
             }
             _ => return Err(err.into()),
         },
     };
-    let mut cpu_features = cli.cpu_features;
-
-    let misalignment_bytes = b"allows-misaligned-mem-access";
-    if !cpu_features
-        .as_bytes()
-        .windows(misalignment_bytes.len())
-        .any(|w| w == misalignment_bytes)
-    {
-        let mut bytes = cpu_features.into_bytes();
-        if !bytes.is_empty() {
-            bytes.push(b',');
-        }
-
-        bytes.extend_from_slice(b"+allows-misaligned-mem-access");
-        cpu_features = CString::new(bytes).unwrap();
-    }
-
-    let mut llvm_args = cli.llvm_args;
-    let mut has_stack_frame_size = false;
-    for arg in &llvm_args {
-        match stack_frame_size_arg(arg) {
-            Some(StackFrameSizeArg::WithValue(_)) => {
-                has_stack_frame_size = true
-            }
-            Some(StackFrameSizeArg::MissingValue) => {
-                return Err(CliError::MissingStackFrameSize.into());
-            }
-            None => {}
-        }
-    }
-    if !has_stack_frame_size {
-        llvm_args.push(CString::new("-bpf-stack-size=4096").unwrap());
-    }
-
-    let cpu = cli.override_cpu_flag.unwrap();
-    if cli.enable_stack_frame_gaps && !matches!(cli.arch.0, SbpfArch::V0) {
-        return Err(CliError::StackFrameGapsRequireV0.into());
-    }
     if matches!(cli.arch.0, SbpfArch::V0)
-        && !matches!(cpu, Cpu::Generic | Cpu::V1 | Cpu::V2)
+        && !matches!(cli.cpu, Cpu::Generic | Cpu::V1 | Cpu::V2)
     {
-        return Err(CliError::UnsupportedV0Cpu(cpu).into());
+        return Err(CliError::UnsupportedV0Cpu(cli.cpu).into());
     }
 
-    Ok(CommandLine {
-        target: cli.target,
-        override_cpu_flag: cli.override_cpu_flag,
-        cpu,
-        cpu_features,
-        output: cli.output,
-        emit: cli.emit,
-        btf: cli.btf,
-        allow_bpf_trap: cli.allow_bpf_trap,
-        _libs: cli._libs,
-        optimize: cli.optimize,
-        export_symbols: cli.export_symbols,
-        log_file: cli.log_file,
-        log_level: cli.log_level,
-        unroll_loops: cli.unroll_loops,
-        ignore_inline_never: cli.ignore_inline_never,
-        dump_module: cli.dump_module,
-        dump_cfg_dir: cli.dump_cfg_dir,
-        sbpf_optimize: cli.sbpf_optimize,
-        arch: cli.arch,
-        enable_stack_frame_gaps: cli.enable_stack_frame_gaps,
-        llvm_args,
-        disable_expand_memcpy_in_order: cli.disable_expand_memcpy_in_order,
-        disable_memory_builtins: cli.disable_memory_builtins,
-        inputs: cli.inputs,
-        export: cli.export,
-        fatal_errors: cli.fatal_errors,
-        _debug: cli._debug,
-        deploy: cli.deploy,
-    })
+    Ok(cli)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -491,7 +359,6 @@ fn main() -> anyhow::Result<()> {
         dump_cfg_dir,
         sbpf_optimize,
         arch,
-        enable_stack_frame_gaps,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
         mut inputs,
@@ -549,7 +416,29 @@ fn main() -> anyhow::Result<()> {
         [.., CliOptLevel(optimize)] => optimize,
     };
 
-    let stack_frame_size = stack_frame_size_from_llvm_args(&llvm_args)?;
+    let stack_frame_size_arg: for<'a> fn(&'a CStr) -> Option<&'a str> = |arg| {
+        const FLAG: &str = "bpf-stack-size";
+
+        let arg = arg.to_str().ok()?;
+        let arg = arg.strip_prefix("--").or_else(|| arg.strip_prefix('-'))?;
+        let rest = arg.strip_prefix(FLAG)?;
+
+        rest.strip_prefix('=')
+    };
+    let stack_frame_size_from_llvm_args =
+        |llvm_args: &[CString]| -> Result<i32, CliError> {
+            let arg = llvm_args
+                .iter()
+                .rev()
+                .find_map(|arg| stack_frame_size_arg(arg))
+                .ok_or(CliError::MissingStackFrameSize)?;
+
+            arg.parse::<i32>().ok().filter(|size| *size > 0).ok_or_else(|| {
+                CliError::InvalidStackFrameSize(arg.to_string())
+            })
+        };
+
+    let stack_frame_size_result = stack_frame_size_from_llvm_args(&llvm_args);
 
     let mut linker = Linker::new(LinkerOptions {
         target,
@@ -564,6 +453,7 @@ fn main() -> anyhow::Result<()> {
         btf,
         allow_bpf_trap,
     });
+    let stack_frame_size = stack_frame_size_result?;
 
     if let Some(path) = dump_module {
         linker.set_dump_module_path(path);
@@ -599,12 +489,7 @@ fn main() -> anyhow::Result<()> {
     };
     let bytecode = link_program(
         &program,
-        ProgramOptions::new(
-            sbpf_optimization,
-            arch.0,
-            stack_frame_size,
-            enable_stack_frame_gaps,
-        ),
+        ProgramOptions::new(sbpf_optimization, arch.0, stack_frame_size),
     )?;
 
     let src_name = std::path::Path::new(&output)
@@ -667,27 +552,16 @@ mod tests {
         .into_iter()
         .map(|s| s.to_string());
         let CommandLine {
-            cpu,
             disable_expand_memcpy_in_order,
             deploy,
-            cpu_features,
-            llvm_args,
             sbpf_optimize,
             arch,
             ..
         } = process_cli_options(args).unwrap();
-        assert!(matches!(cpu, Cpu::V2));
         assert!(disable_expand_memcpy_in_order);
         assert!(deploy);
         assert!(sbpf_optimize);
         assert!(matches!(arch.0, SbpfArch::V3));
-
-        assert_eq!(cpu_features.to_bytes(), b"+allows-misaligned-mem-access");
-        assert!(
-            llvm_args
-                .iter()
-                .any(|a| a.to_str().unwrap() == "-bpf-stack-size=4096")
-        );
     }
 
     #[test]
@@ -697,24 +571,20 @@ mod tests {
             "input.o",
             "-o",
             "/tmp/bin.so",
-            "--override-cpu-flag=v1",
             "--emit=llvm-ir",
             "--deploy=false",
             "--fatal-errors=false",
             "--disable-expand-memcpy-in-order=false",
             "--sbpf-optimize=false",
-            "--arch=v0",
         ]
         .into_iter()
         .map(|s| s.to_string());
         let CommandLine {
-            cpu,
             emit,
             deploy,
             fatal_errors,
             disable_expand_memcpy_in_order,
             sbpf_optimize,
-            arch,
             output,
             ..
         } = process_cli_options(args).unwrap();
@@ -725,8 +595,6 @@ mod tests {
         assert!(!fatal_errors);
         assert!(!disable_expand_memcpy_in_order);
         assert!(!sbpf_optimize);
-        assert!(matches!(cpu, Cpu::V1));
-        assert!(matches!(arch.0, SbpfArch::V0));
         assert_eq!(output, PathBuf::from("/tmp/bin.so"));
     }
 
@@ -741,7 +609,6 @@ mod tests {
             "--btf",
             "--allow-bpf-trap",
             "--unroll-loops",
-            "--override-cpu-flag=v1",
             "--ignore-inline-never",
             "--disable-memory-builtins",
             "--log-level=debug",
@@ -751,7 +618,6 @@ mod tests {
         .into_iter()
         .map(|s| s.to_string());
         let CommandLine {
-            cpu,
             target,
             btf,
             allow_bpf_trap,
@@ -772,7 +638,6 @@ mod tests {
         assert!(btf);
         assert!(allow_bpf_trap);
         assert!(unroll_loops);
-        assert!(matches!(cpu, Cpu::V1));
         assert!(ignore_inline_never);
         assert!(disable_memory_builtins);
         assert_eq!(log_level, Some(Level::DEBUG));
@@ -782,129 +647,15 @@ mod tests {
     }
 
     #[test]
-    fn test_misalignment_feature_not_duplicated_when_already_present() {
-        let args = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--cpu-features=-allows-misaligned-mem-access,+alu32",
-        ]
-        .into_iter()
-        .map(|s| s.to_string());
-        let CommandLine { cpu_features, .. } =
-            process_cli_options(args).unwrap();
-
-        assert_eq!(
-            cpu_features.to_bytes(),
-            b"-allows-misaligned-mem-access,+alu32"
-        );
-    }
-
-    #[test]
-    fn test_cpu_features_accepts_split_disabled_feature() {
-        let args = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--cpu-features",
-            "-alu32",
-        ]
-        .into_iter()
-        .map(|s| s.to_string());
-        let CommandLine { cpu_features, .. } =
-            process_cli_options(args).unwrap();
-
-        assert_eq!(
-            cpu_features.to_bytes(),
-            b"-alu32,+allows-misaligned-mem-access"
-        );
-    }
-
-    #[test]
-    fn test_override_cpu() {
-        let args = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--cpu=v1",
-            "--override-cpu-flag=v3",
-        ]
-        .into_iter()
-        .map(|s| s.to_string());
-        let CommandLine { cpu, .. } = process_cli_options(args).unwrap();
-        assert!(matches!(cpu, Cpu::V3));
-    }
-
-    #[test]
-    fn test_cpu_flag_is_ignored_without_override() {
-        let args = ["sbpf-linker", "input.o", "-o", "/tmp/bin.o", "--cpu=v3"]
-            .into_iter()
-            .map(|s| s.to_string());
-        let CommandLine { cpu, .. } = process_cli_options(args).unwrap();
-        assert!(matches!(cpu, Cpu::V2));
-    }
-
-    #[test]
-    fn test_bpf_stack_size_rejects_a_missing_value() {
-        for flag in ["-bpf-stack-size", "--bpf-stack-size"] {
-            let args = vec![
-                "sbpf-linker".to_string(),
-                "input.o".to_string(),
-                "-o".to_string(),
-                "/tmp/bin.o".to_string(),
-                format!("--llvm-args={flag}"),
-            ]
-            .into_iter();
-
-            let error = process_cli_options(args).unwrap_err();
-            assert_eq!(
-                error.to_string(),
-                "`-bpf-stack-size` is missing a value; expected `-bpf-stack-size=<value>`"
-            );
-        }
-    }
-
-    #[test]
-    fn test_bpf_stack_size_value_is_not_overridden_by_the_default() {
-        for flag in ["-bpf-stack-size=8192", "--bpf-stack-size=8192"] {
-            let args = vec![
-                "sbpf-linker".to_string(),
-                "input.o".to_string(),
-                "-o".to_string(),
-                "/tmp/bin.o".to_string(),
-                format!("--llvm-args={flag}"),
-            ]
-            .into_iter();
-
-            let CommandLine { llvm_args, .. } =
-                process_cli_options(args).unwrap();
-            assert_eq!(
-                llvm_args
-                    .iter()
-                    .map(|arg| arg.to_str().unwrap())
-                    .collect::<Vec<_>>(),
-                [flag]
-            );
-            assert_eq!(
-                stack_frame_size_from_llvm_args(&llvm_args).unwrap(),
-                8192
-            );
-        }
-    }
-
-    #[test]
     fn test_sbpf_v0_rejects_unsupported_cpu_arches() {
-        for unsupported_cpu in ["probe", "v3"] {
+        for unsupported_cpu in ["probe", "v3", "v4"] {
             let args = vec![
                 "sbpf-linker".to_string(),
                 "input.o".to_string(),
                 "-o".to_string(),
                 "/tmp/bin.o".to_string(),
                 "--arch=v0".to_string(),
-                format!("--override-cpu-flag={unsupported_cpu}"),
+                format!("--cpu={unsupported_cpu}"),
             ]
             .into_iter();
 
@@ -913,39 +664,5 @@ mod tests {
                 "sBPF architecture `v0` only supports CPU architectures"
             ));
         }
-    }
-
-    #[test]
-    fn test_stack_frame_gaps_require_sbpf_v0() {
-        let unsupported = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--enable-stack-frame-gaps",
-        ]
-        .into_iter()
-        .map(str::to_string);
-
-        let error = process_cli_options(unsupported).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "`--enable-stack-frame-gaps` is only supported with `--arch=v0`"
-        );
-
-        let supported = [
-            "sbpf-linker",
-            "input.o",
-            "-o",
-            "/tmp/bin.o",
-            "--arch=v0",
-            "--enable-stack-frame-gaps",
-        ]
-        .into_iter()
-        .map(str::to_string);
-
-        let CommandLine { enable_stack_frame_gaps, .. } =
-            process_cli_options(supported).unwrap();
-        assert!(enable_stack_frame_gaps);
     }
 }

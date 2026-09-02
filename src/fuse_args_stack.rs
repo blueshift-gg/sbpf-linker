@@ -107,10 +107,8 @@ pub fn diagnose_stack_arg_overlaps(
 pub fn rewrite_r11_stack_args(
     ast: &mut AST,
     stack_frame_size: i32,
-    stack_frame_gaps: bool,
 ) -> Result<(), Vec<CompileError>> {
     let mut errors = Vec::new();
-    let gap_adjustment = if stack_frame_gaps { stack_frame_size } else { 0 };
 
     for node in ast.nodes.iter_mut() {
         let ASTNode::Instruction { instruction, offset } = node else {
@@ -171,13 +169,7 @@ pub fn rewrite_r11_stack_args(
                 "an outgoing r11 store must have a negative offset"
             );
 
-            let Some(new_off) = off
-                .checked_neg()
-                .and_then(|offset| {
-                    i32::from(offset).checked_add(gap_adjustment)
-                })
-                .and_then(|offset| i16::try_from(offset).ok())
-            else {
+            let Some(new_off) = off.checked_neg() else {
                 errors.push(CompileError::BytecodeError {
                     error: format!(
                         "cannot rewrite r11 store at byte offset {offset:#x}: negating offset {off} does not fit in a BPF instruction offset"

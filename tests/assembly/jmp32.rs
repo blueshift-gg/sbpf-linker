@@ -1,6 +1,6 @@
 // assembly-output: ptx-linker
 // ignore-sbpf-arch: v0
-// compile-flags: --crate-type bin -C opt-level=3 -C panic=abort -C link-arg=--override-cpu-flag=v3
+// compile-flags: --crate-type bin -C opt-level=3 -C panic=abort
 
 // This fixture documents the harness-level sBPF arch filter. It should run
 // only in the v3 pass and be skipped while the harness is running v0. It also
