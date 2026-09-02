@@ -33,6 +33,10 @@ pub enum SbpfLinkerError {
         abs_off: u64,
         addend: i64,
     },
+    #[error(
+        "Error handling rodata relocation in section={section} address={address:#x}: {detail}"
+    )]
+    RodataRelocationError { section: String, address: u64, detail: String },
 }
 
 #[derive(Debug, Clone)]

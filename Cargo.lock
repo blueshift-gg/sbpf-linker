@@ -1020,8 +1020,7 @@ dependencies = [
 [[package]]
 name = "sbpf-analyze"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d459f9796c8f00f7a5133d10a2c0f233311209bb80fdb6bb26177ae08a0f7580"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "sbpf-common",
  "sbpf-ir",
@@ -1031,8 +1030,7 @@ dependencies = [
 [[package]]
 name = "sbpf-assembler"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b9f0d1f7fc0d1ba3f216a513d8d177f51793174ece74e7bf40a4a514ffd3e69"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1056,22 +1054,43 @@ dependencies = [
 [[package]]
 name = "sbpf-common"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77afd322e59a87a5c6e95f05bbca5875a705d272c31187879370b2faa80f72f0"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "either",
  "num-derive",
  "num-traits",
+ "sbpf-common-derive",
+ "sbpf-common-tablegen",
  "sbpf-syscall-map",
  "serde",
  "thiserror 2.0.18",
 ]
 
 [[package]]
+name = "sbpf-common-derive"
+version = "0.3.0"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "sbpf-common-tablegen",
+ "syn",
+]
+
+[[package]]
+name = "sbpf-common-tablegen"
+version = "0.3.0"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "sbpf-ir"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b448109db5a6746c5b7fa17fbaf10a69abd34ffd3a503c5080ba3f75248d748c"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1104,8 +1123,7 @@ dependencies = [
 [[package]]
 name = "sbpf-syscall-map"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202af16eb6a4606a84ac18500eb3e44465289f63e56f43445f6e8581cdeeed19"
+source = "git+https://github.com/bidhan-a/sbpf?branch=fix%2Frodata-relocations#6cad01fd9b9cdfe90be889842d072a5b9b7d6912"
 
 [[package]]
 name = "scopeguard"

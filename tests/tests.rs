@@ -1,7 +1,7 @@
 #![expect(unused_crate_dependencies, reason = "used in test harness")]
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env,
     ffi::OsString,
     fs, io,
@@ -10,7 +10,7 @@ use std::{
 };
 
 use either::Either;
-use object::{File, Object as _, ObjectSection as _};
+use object::{File, Object as _, ObjectSection as _, ObjectSymbol as _};
 use sbpf_assembler::{
     OptimizationConfig, SbpfArch,
     astnode::{ASTNode, ROData},
@@ -292,6 +292,15 @@ fn render_emitted_program<A: TestArch>(path: &Path) -> anyhow::Result<String> {
         }
     }
 
+    out.extend(render_rodata_relocations::<A>(
+        &bytes,
+        rodata_nodes,
+        rodata_base,
+        rodata_len,
+        parse_result.code_section.get_size(),
+        &code_labels,
+    )?);
+
     for node in code_nodes {
         match node {
             ASTNode::Label { label, offset } => {
@@ -418,4 +427,173 @@ fn render_rodata(rodata: &ROData) -> anyhow::Result<String> {
             rodata.name
         )),
     }
+}
+
+fn render_rodata_relocations<A: TestArch>(
+    bytes: &[u8],
+    rodata_nodes: &[ASTNode],
+    rodata_base: u64,
+    rodata_len: u64,
+    text_len: u64,
+    code_labels: &HashMap<i64, String>,
+) -> anyhow::Result<Vec<String>> {
+    let obj = File::parse(bytes)?;
+    let rodata_vaddr =
+        ProgramHeader::new_load(rodata_base, rodata_len, false, A::ARCH)
+            .p_vaddr;
+    let mut relocation_lines = BTreeMap::new();
+    for section in obj.sections().filter(|section| {
+        section.name().is_ok_and(|name| {
+            name.starts_with(".rodata") || name.starts_with(".data.rel.ro")
+        })
+    }) {
+        for (input_offset, _) in section.relocations() {
+            let mut relocation = None;
+            for node in rodata_nodes {
+                let ASTNode::ROData { rodata, offset } = node else {
+                    continue;
+                };
+                let symbol = obj.symbols().find(|symbol| {
+                    symbol.name().is_ok_and(|name| name == rodata.name)
+                        && symbol.section_index().is_some()
+                });
+
+                let Some(symbol) = symbol else {
+                    if rodata.name.starts_with(".rodata.__at__") {
+                        continue;
+                    }
+
+                    return Err(anyhow::anyhow!(
+                        "no symbol found for rodata: {}",
+                        rodata.name
+                    ));
+                };
+                let section_index = symbol.section_index().unwrap().0;
+                let address = symbol.address();
+                if section_index != section.index().0 {
+                    continue;
+                }
+
+                let Some(offset_in_node) = input_offset.checked_sub(address)
+                else {
+                    continue;
+                };
+
+                let node_bytes = match rodata.args.get(1) {
+                    Some(Token::VectorLiteral(node_bytes, _)) => {
+                        node_bytes.as_slice()
+                    }
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "rodata {} is not a byte vector",
+                            rodata.name
+                        ));
+                    }
+                };
+                if offset_in_node < node_bytes.len() as u64 {
+                    relocation = Some((
+                        rodata,
+                        *offset + offset_in_node,
+                        offset_in_node,
+                    ));
+                    break;
+                }
+            }
+
+            let (relocation_rodata, output_offset, offset_in_node) =
+                relocation.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "invalid rodata relocation: {input_offset:#x}",
+                    )
+                })?;
+
+            let offset_in_node = usize::try_from(offset_in_node)?;
+            let relocation_bytes = match relocation_rodata.args.get(1) {
+                Some(Token::VectorLiteral(node_bytes, _)) => node_bytes
+                    .get(offset_in_node..offset_in_node + 8)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "relocation in rodata {} is out of bounds",
+                            relocation_rodata.name
+                        )
+                    })?,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "rodata {} is not a byte vector",
+                        relocation_rodata.name
+                    ));
+                }
+            };
+            let mut encoded_target = [0u8; 8];
+            for (byte, value) in
+                encoded_target.iter_mut().zip(relocation_bytes)
+            {
+                let Number::Int(value) = value else {
+                    return Err(anyhow::anyhow!(
+                        "relocation in rodata {} contains non-integer byte",
+                        relocation_rodata.name
+                    ));
+                };
+                *byte = u8::try_from(*value).map_err(|_| {
+                    anyhow::anyhow!(
+                        "relocation in rodata {} contains invalid byte {value}",
+                        relocation_rodata.name
+                    )
+                })?;
+            }
+
+            let encoded_target = u64::from_le_bytes(encoded_target);
+            let target_vaddr = if A::ARCH.is_v3() {
+                encoded_target
+            } else {
+                encoded_target >> 32
+            };
+
+            let text_vaddr = ProgramHeader::new_load(
+                rodata_base - text_len,
+                text_len,
+                true,
+                A::ARCH,
+            )
+            .p_vaddr;
+            let target = if let Some(text_off) = target_vaddr
+                .checked_sub(text_vaddr)
+                .filter(|address| *address < text_len)
+            {
+                match code_labels.get(&(text_off as i64)) {
+                    Some(name) => format!("text[{text_off}] ({name})"),
+                    None => format!("text[{text_off}]"),
+                }
+            } else if let Some(target_address_out) = target_vaddr
+                .checked_sub(rodata_vaddr)
+                .filter(|address| *address < rodata_len)
+            {
+                let target_name = rodata_nodes.iter().find_map(|node| {
+                    let ASTNode::ROData { rodata, offset } = node else {
+                        return None;
+                    };
+                    if *offset == target_address_out {
+                        return Some(rodata.name.as_str());
+                    }
+                    None
+                });
+                match target_name {
+                    Some(name) => {
+                        format!("rodata[{target_address_out}] ({name})")
+                    }
+                    None => format!("rodata[{target_address_out}]"),
+                }
+            } else {
+                return Err(anyhow::anyhow!(
+                    "relocation in rodata {} targets an address outside text and rodata",
+                    relocation_rodata.name
+                ));
+            };
+            relocation_lines.insert(
+                output_offset,
+                format!("rodata-relocation[{output_offset}] -> {target}"),
+            );
+        }
+    }
+    Ok(relocation_lines.into_values().collect())
 }

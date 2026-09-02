@@ -15,8 +15,8 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-sbpf-assembler = "0.3.0"
-sbpf-common = "0.3.0"
+sbpf-assembler = { git = "https://github.com/bidhan-a/sbpf", branch = "fix/rodata-relocations" }
+sbpf-common = { git = "https://github.com/bidhan-a/sbpf", branch = "fix/rodata-relocations" }
 clap = { workspace = true }
 either = { version = "1.16.0", features = ["serde"] }
 object = { version = "0.40.0", features = ["write"] }

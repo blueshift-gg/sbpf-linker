@@ -3,8 +3,8 @@ use sbpf_assembler::CompileError;
 use sbpf_assembler::ast::AST;
 use sbpf_assembler::astnode::ASTNode;
 use sbpf_common::{
-    instruction::Instruction,
-    opcode::{LOAD_MEMORY_OPS, Opcode, STORE_IMM_OPS, STORE_REG_OPS},
+    OpcodeTable, instruction::Instruction, opcode::Opcode,
+    optype::OperationType,
 };
 use std::ops::Range;
 
@@ -49,16 +49,13 @@ pub fn diagnose_stack_arg_overlaps(
             Opcode::Ldxdw | Opcode::Stdw | Opcode::Stxdw => 8,
             _ => return None,
         };
-        let (register, is_load) =
-            if LOAD_MEMORY_OPS.contains(&instruction.opcode) {
-                (instruction.src.as_ref()?.n, true)
-            } else if STORE_IMM_OPS.contains(&instruction.opcode)
-                || STORE_REG_OPS.contains(&instruction.opcode)
-            {
+        let (register, is_load) = match instruction.opcode.group() {
+            OperationType::LoadMemory => (instruction.src.as_ref()?.n, true),
+            OperationType::StoreImmediate | OperationType::StoreRegister => {
                 (instruction.dst.as_ref()?.n, false)
-            } else {
-                return None;
-            };
+            }
+            _ => return None,
+        };
 
         Some(MemoryAccess { register, offset, width, is_load })
     };
@@ -124,9 +121,12 @@ pub fn rewrite_r11_stack_args(
             continue;
         }
 
-        let is_load = LOAD_MEMORY_OPS.contains(&instruction.opcode);
-        let is_store = STORE_IMM_OPS.contains(&instruction.opcode)
-            || STORE_REG_OPS.contains(&instruction.opcode);
+        let is_load =
+            matches!(instruction.opcode.group(), OperationType::LoadMemory);
+        let is_store = matches!(
+            instruction.opcode.group(),
+            OperationType::StoreImmediate | OperationType::StoreRegister
+        );
         assert!(
             is_load || is_store,
             "r11 must only be used by memory load/store instructions"

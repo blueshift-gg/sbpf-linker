@@ -50,7 +50,9 @@ pub fn entrypoint(x: *mut u8) -> u64 {
 
 // CHECK: rodata-count: 4
 // CHECK: rodata[0]: byte 116, 101, 115, 116, 115, 47, 97, 115, 115, 101, 109, 98, 108, 121, 47, 100, 97, 116, 97, 95, 114, 101, 108, 95, 114, 111, 95, 108, 100, 100, 119, 46, 114, 115, 0
-// CHECK: rodata[35]: byte 0, 0, 0, 0, 0, 0, 0, 0, 34, 0, 0, 0, 0, 0, 0, 0, 48, 0, 0, 0, 7, 0, 0, 0
-// CHECK: rodata[59]: byte 0, 0, 0, 0, 0, 0, 0, 0, 34, 0, 0, 0, 0, 0, 0, 0, 48, 0, 0, 0, 20, 0, 0, 0
+// CHECK: rodata[35]: byte {{.*}}, 34, 0, 0, 0, 0, 0, 0, 0, 48, 0, 0, 0, 7, 0, 0, 0
+// CHECK: rodata[59]: byte {{.*}}, 34, 0, 0, 0, 0, 0, 0, 0, 48, 0, 0, 0, 20, 0, 0, 0
+// CHECK: rodata-relocation[35] -> rodata[0]
+// CHECK: rodata-relocation[59] -> rodata[0]
 // CHECK: lddw r{{[0-9]+}}, rodata[35]
 // CHECK: lddw r{{[0-9]+}}, rodata[59]
