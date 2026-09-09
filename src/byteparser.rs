@@ -35,7 +35,10 @@ fn decode_instruction_for_arch(
 // address and fill anonymous gaps before the AST is built.
 struct RodataEntry {
     section_index: SectionIndex,
+    // Offset within the original input section
     address: u64,
+    // Offset within the combined rodata section in the output
+    address_out: u64,
     size: u64,
     name: String,
     bytes: Vec<Number>,
@@ -74,8 +77,6 @@ pub fn parse_bytecode(
         text_size += section.size();
     }
     let mut pending_rodata: Vec<RodataEntry> = Vec::new();
-    let mut rodata_table: HashMap<(Option<SectionIndex>, u64), String> =
-        HashMap::new();
 
     let mut function_starts = Vec::new();
     for symbol in obj.symbols() {
@@ -104,6 +105,7 @@ pub fn parse_bytecode(
             pending_rodata.push(RodataEntry {
                 section_index: ro_section.index(),
                 address: symbol.address(),
+                address_out: 0,
                 size: symbol.size(),
                 name: symbol.name().unwrap().to_owned(),
                 bytes,
@@ -173,6 +175,7 @@ pub fn parse_bytecode(
                 synthetic_rodata.push(RodataEntry {
                     section_index: *section_index,
                     address: cursor,
+                    address_out: 0,
                     size: entry.address - cursor,
                     name: format!(
                         ".rodata.__anon_{:#x}_{:#x}",
@@ -192,6 +195,7 @@ pub fn parse_bytecode(
             synthetic_rodata.push(RodataEntry {
                 section_index: *section_index,
                 address: cursor,
+                address_out: 0,
                 size: section_size - cursor,
                 name: format!(
                     ".rodata.__anon_{:#x}_{:#x}",
@@ -205,26 +209,96 @@ pub fn parse_bytecode(
     pending_rodata.extend(synthetic_rodata);
     pending_rodata.sort_by_key(|e| (e.section_index.0, e.address));
 
-    let mut rodata_offset = 0u64;
-    for entry in pending_rodata {
-        ast.rodata_nodes.push(ASTNode::ROData {
-            rodata: ROData {
-                name: entry.name.clone(),
-                args: vec![
-                    Token::Directive(String::from("byte"), 0..1),
-                    Token::VectorLiteral(entry.bytes, 0..1),
-                ],
-                span: 0..1,
-            },
-            offset: rodata_offset,
-        });
-        rodata_table
-            .insert((Some(entry.section_index), entry.address), entry.name);
-        rodata_offset += entry.size;
+    // Calculate each rodata entry's output offset.
+    let mut rodata_size = 0u64;
+    for entry in &mut pending_rodata {
+        entry.address_out = rodata_size;
+        rodata_size += entry.size;
+    }
+
+    // Function to resolve an input section address to it's offset in the output rodata.
+    let resolve_rodata_output_offset =
+        |section: SectionIndex, input_address: u64| {
+            pending_rodata.iter().find_map(|entry| {
+                (entry.section_index == section
+                    && (entry.address..entry.address + entry.size)
+                        .contains(&input_address))
+                .then(|| entry.address_out + (input_address - entry.address))
+            })
+        };
+
+    // Map each rodata relocation to its output offset and target label.
+    let mut rodata_target_labels: HashMap<u64, String> = HashMap::new();
+    let mut rodata_target_nodes = Vec::new();
+    for (section_index, ro_section) in &ro_sections {
+        let section_name = ro_section.name().unwrap_or("<invalid>");
+        let section_data = ro_section.data()?;
+        for (relocation_address, rel) in ro_section.relocations() {
+            let relocation_error =
+                |detail: &str| SbpfLinkerError::RodataRelocationError {
+                    section: section_name.to_owned(),
+                    address: relocation_address,
+                    detail: detail.to_owned(),
+                };
+
+            let Symbol(symbol_index) = rel.target() else {
+                return Err(relocation_error("invalid relocation target"));
+            };
+            let symbol = obj.symbol_by_index(symbol_index)?;
+            let target_section = symbol.section_index().ok_or_else(|| {
+                relocation_error("relocation target has no section")
+            })?;
+            let addend = if rel.has_implicit_addend() {
+                let stored = section_data
+                    .get(
+                        relocation_address as usize
+                            ..relocation_address as usize + 8,
+                    )
+                    .ok_or_else(|| {
+                        relocation_error("relocation location out of bounds")
+                    })?;
+                i64::from_le_bytes(stored.try_into().unwrap())
+            } else {
+                rel.addend()
+            };
+            let relocation_offset = resolve_rodata_output_offset(
+                *section_index,
+                relocation_address,
+            )
+            .ok_or_else(|| {
+                relocation_error("relocation location is not rodata")
+            })?;
+
+            let target = symbol.address().wrapping_add(addend as u64);
+
+            let target_name = resolve_rodata_label(
+                target_section,
+                target,
+                &pending_rodata,
+                &mut rodata_target_labels,
+                &mut rodata_target_nodes,
+            )
+            .or_else(|| {
+                resolve_text_label(
+                    target_section,
+                    target,
+                    &text_section_bases,
+                    text_size,
+                    &mut labels_by_offset,
+                    &mut synthetic_labels_by_offset,
+                )
+            })
+            .ok_or_else(|| {
+                relocation_error("relocation target is not rodata or text")
+            })?;
+
+            // Add the relocation to the AST.
+            ast.add_rodata_relocation(relocation_offset, target_name);
+        }
     }
 
     let mut debug_sections = Vec::default();
-    ast.set_rodata_size(rodata_offset);
+    ast.set_rodata_size(rodata_size);
 
     for section in obj.sections() {
         if let Some(section_base) = text_section_bases.get(&section.index()) {
@@ -271,21 +345,60 @@ pub fn parse_bytecode(
                     .unwrap();
 
                 if node.opcode == Opcode::Lddw {
-                    // addend is not explicit in the relocation entry, but implicitly
-                    // encoded as the immediate value of the instruction
-                    let addend = match node.imm {
-                        Some(Either::Right(Number::Int(val))) => val,
-                        _ => 0,
-                    };
+                    let relocation_error =
+                        |detail: &str| SbpfLinkerError::LddwRelocationError {
+                            section: section_name.clone(),
+                            address: rel.0,
+                            detail: detail.to_owned(),
+                        };
 
-                    let key = (symbol.section_index(), addend as u64);
-                    if rodata_table.contains_key(&key) {
-                        // Replace the immediate value with the rodata label
-                        let ro_label = rodata_table[&key].clone();
-                        node.imm = Some(Either::Left(ro_label));
+                    let addend = if rel_has_implicit_addend {
+                        match node.imm {
+                            Some(Either::Right(
+                                Number::Int(val) | Number::Addr(val),
+                            )) => val,
+                            _ => rel_addend,
+                        }
                     } else {
-                        panic!("relocation in lddw is not in .rodata");
-                    }
+                        rel_addend
+                    };
+                    let target_section =
+                        symbol.section_index().ok_or_else(|| {
+                            relocation_error(
+                                "relocation target has no section",
+                            )
+                        })?;
+                    let target = symbol
+                        .address()
+                        .checked_add_signed(addend)
+                        .ok_or_else(|| {
+                        relocation_error("relocation target overflow")
+                    })?;
+
+                    let target_name = resolve_rodata_label(
+                        target_section,
+                        target,
+                        &pending_rodata,
+                        &mut rodata_target_labels,
+                        &mut rodata_target_nodes,
+                    )
+                    .or_else(|| {
+                        resolve_text_label(
+                            target_section,
+                            target,
+                            &text_section_bases,
+                            text_size,
+                            &mut labels_by_offset,
+                            &mut synthetic_labels_by_offset,
+                        )
+                    })
+                    .ok_or_else(|| {
+                        relocation_error(
+                            "relocation target is not rodata or text",
+                        )
+                    })?;
+                    // Replace the immediate value with the rodata label
+                    node.imm = Some(Either::Left(target_name));
                 } else if node.opcode == Opcode::Call {
                     if symbol.kind() == object::SymbolKind::Section {
                         let addend_i64 = if rel_has_implicit_addend {
@@ -375,6 +488,21 @@ pub fn parse_bytecode(
         }
     }
 
+    ast.rodata_nodes.extend(rodata_target_nodes);
+    for entry in pending_rodata {
+        ast.rodata_nodes.push(ASTNode::ROData {
+            rodata: ROData {
+                name: entry.name,
+                args: vec![
+                    Token::Directive(String::from("byte"), 0..1),
+                    Token::VectorLiteral(entry.bytes, 0..1),
+                ],
+                span: 0..1,
+            },
+            offset: entry.address_out,
+        });
+    }
+
     if !synthetic_labels_by_offset.is_empty() {
         // Add synthetic labels to AST
         let mut synthetic_labels =
@@ -449,4 +577,63 @@ pub fn parse_bytecode(
     parse_result.debug_sections = debug_sections;
 
     Ok(parse_result)
+}
+
+fn resolve_rodata_label(
+    section: SectionIndex,
+    address: u64,
+    entries: &[RodataEntry],
+    labels: &mut HashMap<u64, String>,
+    nodes: &mut Vec<ASTNode>,
+) -> Option<String> {
+    let entry = entries.iter().find(|entry| {
+        entry.section_index == section
+            && (entry.address..entry.address + entry.size).contains(&address)
+    })?;
+    let offset = entry.address_out + address - entry.address;
+    if offset == entry.address_out {
+        return Some(entry.name.clone());
+    }
+    if let Some(name) = labels.get(&offset) {
+        return Some(name.clone());
+    }
+
+    let name = format!(".rodata.__at__{offset:#x}");
+    nodes.push(ASTNode::ROData {
+        rodata: ROData {
+            name: name.clone(),
+            args: vec![
+                Token::Directive(String::from("byte"), 0..1),
+                Token::VectorLiteral(Vec::new(), 0..1),
+            ],
+            span: 0..1,
+        },
+        offset,
+    });
+    labels.insert(offset, name.clone());
+    Some(name)
+}
+
+fn resolve_text_label(
+    section: SectionIndex,
+    address: u64,
+    section_bases: &HashMap<SectionIndex, u64>,
+    text_size: u64,
+    labels: &mut HashMap<u64, String>,
+    synthetic_labels: &mut HashMap<u64, String>,
+) -> Option<String> {
+    let offset = section_bases
+        .get(&section)?
+        .checked_add(address)
+        .filter(|offset| *offset < text_size)?;
+    if let Some(name) = labels.get(&offset) {
+        return Some(name.clone());
+    }
+
+    let name = synthetic_labels
+        .entry(offset)
+        .or_insert_with(|| format!(".text.__at__{offset:#x}"))
+        .clone();
+    labels.insert(offset, name.clone());
+    Some(name)
 }
