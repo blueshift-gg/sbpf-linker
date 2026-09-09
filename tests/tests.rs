@@ -1,4 +1,4 @@
-#![expect(unused_crate_dependencies, reason = "used in test harness")]
+#![allow(unused_crate_dependencies, reason = "used in test harness")]
 
 use std::{
     collections::HashMap,
