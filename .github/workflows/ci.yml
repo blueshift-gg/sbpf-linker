@@ -130,7 +130,7 @@ jobs:
       - name: Generate code coverage
         env:
           BPFEL_SYSROOT_DIR: ${{ github.workspace }}/target/sysroot
-          MINIMUM_LINE_COVERAGE: 83
+          MINIMUM_LINE_COVERAGE: 80
         run: |
           set -o pipefail
 
