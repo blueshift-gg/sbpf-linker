@@ -14,7 +14,6 @@ export RUSTFLAGS="-Clinker=${linker} -Clink-arg=--llvm-args=--bpf-stack-size=409
 
 cargo +nightly build \
     --release \
-    --offline \
     --locked \
     --target bpfel-unknown-none \
     -Z build-std=core,alloc \
