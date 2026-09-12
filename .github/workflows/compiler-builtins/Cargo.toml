@@ -1,0 +1,14 @@
+[package]
+name = "libcall-program"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]
+members = ["solana-compiler-builtins"]
+
+[dependencies]
+solana-compiler-builtins = { path = "solana-compiler-builtins" }

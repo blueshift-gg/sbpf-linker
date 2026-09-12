@@ -48,6 +48,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
+          components: rust-src
 
       - uses: Swatinem/rust-cache@v2
 
@@ -72,6 +73,12 @@ jobs:
         run: >-
           rustup run nightly
           target/latest-nightly-install/bin/sbpf-linker --version
+
+      - name: Test compiler-builtins dependency discovery
+        env:
+          SBPF_LINKER: ${{ github.workspace }}/target/latest-nightly-install/bin/sbpf-linker
+          CARGO_TARGET_DIR: ${{ runner.temp }}/compiler-builtins-target
+        run: .github/workflows/compiler-builtins/test.sh
 
       - name: Update pinned nightly
         if: needs.timing.outputs.propose == 'true'

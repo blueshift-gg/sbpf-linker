@@ -1093,6 +1093,7 @@ dependencies = [
  "rustc-build-sysroot",
  "sbpf-assembler",
  "sbpf-common",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
  "tracing-appender",
