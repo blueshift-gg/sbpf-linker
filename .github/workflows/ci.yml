@@ -19,9 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve pinned nightly
+        id: pinned
+        run: |
+          channel=$(yq -e '.toolchain.channel' rust-toolchain.toml)
+          echo "toolchain=$channel" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: ${{ steps.pinned.outputs.toolchain }}
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -29,9 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Resolve pinned nightly
+        id: pinned
+        run: |
+          channel=$(yq -e '.toolchain.channel' rust-toolchain.toml)
+          echo "toolchain=$channel" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly
+          toolchain: ${{ steps.pinned.outputs.toolchain }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: >-
