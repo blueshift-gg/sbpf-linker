@@ -42,6 +42,8 @@ jobs:
     name: Test and propose latest nightly
     needs: timing
     runs-on: ubuntu-24.04
+    env:
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - uses: actions/checkout@v4
 
@@ -88,11 +90,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          current=$(cat nightly-version.txt)
-          test -n "$current"
+          current=$(yq -e '.toolchain.channel' rust-toolchain.toml)
 
           if [[ "$CANDIDATE" > "$current" ]]; then
-            echo "$CANDIDATE" > nightly-version.txt
+            yq -i '.toolchain.channel = strenv(CANDIDATE)' rust-toolchain.toml
+            test "$(yq -e '.toolchain.channel' rust-toolchain.toml)" = "$CANDIDATE"
           else
             echo "Pinned nightly ${current} is already current."
           fi
@@ -101,7 +103,7 @@ jobs:
         if: needs.timing.outputs.propose == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          add-paths: nightly-version.txt
+          add-paths: rust-toolchain.toml
           branch: automation/update-rust-nightly
           delete-branch: true
           commit-message: >-
@@ -111,4 +113,5 @@ jobs:
           body: |
             The daily compatibility check passed with `${{ steps.nightly.outputs.toolchain }}`.
 
-            This updates the reproducible CI baseline to that nightly.
+            This updates the pinned toolchain in `rust-toolchain.toml` for both the
+            CI and local builds.

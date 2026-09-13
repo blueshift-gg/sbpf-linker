@@ -154,7 +154,9 @@ jobs:
       - name: Resolve pinned Rust nightly
         id: pinned
         if: steps.changes.outputs.prepare == 'true'
-        run: echo "toolchain=$(cat nightly-version.txt)" >> "$GITHUB_OUTPUT"
+        run: |
+          channel=$(yq -e '.toolchain.channel' rust-toolchain.toml)
+          echo "toolchain=$channel" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
         id: toolchain
