@@ -24,7 +24,7 @@ jobs:
   sync_master:
     name: Merge master into sbpf-linker-next
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Create the app token
         id: app_token
@@ -54,19 +54,31 @@ jobs:
             exit 1
           fi
 
+          # Check if there's an open sync PR
+          pr=$(gh pr list --state open --base "$NEXT_BRANCH" --head "$SYNC_BRANCH" \
+            --json number --jq '.[0].number // empty')
+
           # Bail if next is already up-to-date with master
           if git merge-base --is-ancestor "origin/$MASTER_BRANCH" "origin/$NEXT_BRANCH"; then
             echo "::notice::$NEXT_BRANCH already contains every commit from $MASTER_BRANCH."
             exit 0
           fi
 
-          # Check if there's an open sync PR
-          pr=$(gh pr list --state open --base "$NEXT_BRANCH" --head "$SYNC_BRANCH" \
-            --json number --jq '.[0].number // empty')
+          # Branch off of the sync PR branch if it exists. Otherwise, starts fresh from the next branch
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null; then
+            git fetch --no-tags origin "$SYNC_BRANCH"
+            git checkout -q -B "$SYNC_BRANCH" "origin/$SYNC_BRANCH"
+          else
+            git fetch --no-tags origin "$MASTER_BRANCH"
+            git checkout -q -B "$SYNC_BRANCH" "origin/$NEXT_BRANCH"
+          fi
 
-          # Update $SYNC_BRANCH to master
-          git fetch --no-tags origin "$MASTER_BRANCH"
-          git push origin "origin/$MASTER_BRANCH:refs/heads/$SYNC_BRANCH"
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" merge --no-ff -q --no-edit "origin/$MASTER_BRANCH" || {
+            echo "::error::$MASTER_BRANCH does not merge cleanly into $NEXT_BRANCH. Resolve it on $SYNC_BRANCH, then dispatch this workflow from $SYNC_BRANCH to continue."
+            exit 1
+          }
+
+          git push origin "HEAD:refs/heads/$SYNC_BRANCH"
 
           if [[ -z "$pr" ]]; then
             body=$(printf '%s\n' \
@@ -81,8 +93,9 @@ jobs:
 
           echo "verifying pull request #$pr"
 
-          deadline=$((SECONDS + 300))
-          while [[ "$(gh pr view "$pr" --json statusCheckRollup --jq '.statusCheckRollup | length')" == 0 ]]; do
+          # Wait for the pull request's checks to be created, then for them to finish.
+          deadline=$((SECONDS + 600))
+          until [[ -n "$(gh pr checks "$pr" --json state --jq '.[].state' || true)" ]]; do
             if (( SECONDS >= deadline )); then
               echo "::error::no checks were started for pull request #$pr. If they are waiting on approval, approve them there and re-run this job, or merge it by hand. It is left open for a maintainer."
               exit 1
@@ -90,9 +103,14 @@ jobs:
             sleep 20
           done
 
+          head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+
           if gh pr checks "$pr" --watch --fail-fast; then
-            echo "pr=$pr" >> "$GITHUB_OUTPUT"
-            echo "land=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "pr=$pr"
+              echo "head=$head"
+              echo "land=true"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "::error::the checks for pull request #$pr did not pass, so the merge is not verified. It is left open for a maintainer, and the next run will retry."
             echo "The checks for pull request #$pr did not pass, so the merge is not verified. It is left open for a maintainer." >> "$GITHUB_STEP_SUMMARY"
@@ -104,7 +122,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           PR: ${{ steps.publish.outputs.pr }}
-        run: gh pr merge "$PR" --merge
+          HEAD: ${{ steps.publish.outputs.head }}
+        run: gh pr merge "$PR" --merge --match-head-commit "$HEAD"
 
   track_sbpf:
     name: Track the sbpf pin
@@ -127,6 +146,7 @@ jobs:
 
       - name: Track sbpf master
         id: bump
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -135,12 +155,16 @@ jobs:
             exit 1
           fi
 
-          # Build on top of the PR branch if it is available
+          # Build on the pull request's branch when it is available, so a change made
+          # there survives and the commit this run makes still descends from it.
           pin_sha=$(git ls-remote origin "refs/heads/$PIN_BRANCH" | cut -f1)
           if [[ -n "$pin_sha" ]]; then
             git fetch --no-tags origin "$pin_sha"
             git checkout -q -B "$PIN_BRANCH" FETCH_HEAD
-            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" merge -q --no-edit "origin/$NEXT_BRANCH"
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" merge -q --no-edit "origin/$NEXT_BRANCH" || {
+              echo "::error::$PIN_BRANCH conflicts with $NEXT_BRANCH. Please resolve."
+              exit 1
+            }
           fi
 
           # Find the dependencies that track sbpf master in Cargo.toml and put them space-separated in `pkgs`
@@ -149,22 +173,24 @@ jobs:
 
           # The sbpf revs tracked in Cargo.lock
           pinned=$(NAMES="${pkgs[*]}" yq -p toml -o y -r '[.package[] | select(.name as $n | (strenv(NAMES) | split(" ")) | contains([$n])) | .source] | unique | join(", ")' Cargo.lock)
+          from=${pinned##*#}
 
           echo "moving ${pkgs[*]} from ${pinned:-none} to $tip"
           cargo update "${pkgs[@]/#/-p}" --precise "$tip"
           git add Cargo.lock
-          
+
           if git diff --cached --quiet; then
             echo "::notice::already tracking sbpf master at $tip."
             exit 0
           fi
 
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "chore: track sbpf master at ${tip:0:12}"
-          echo "pinned=${pinned:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "pinned=$from" >> "$GITHUB_OUTPUT"
           echo "rev=$tip" >> "$GITHUB_OUTPUT"
 
       - name: Push the bump and open the pull request
         if: steps.bump.outputs.rev != ''
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           PINNED: ${{ steps.bump.outputs.pinned }}
@@ -177,7 +203,9 @@ jobs:
           title="chore: track sbpf master at ${REV:0:12}"
           body=$(printf '%s\n' \
             "Moves the sbpf pin in \`Cargo.lock\` from \`${PINNED:0:12}\` to \`${REV:0:12}\`." \
+            "" \
             "Upstream diff: https://github.com/blueshift-gg/sbpf/compare/${PINNED}...${REV}" \
+            "" \
             "Merge this with a merge commit; DO NOT squash or rebase \`${NEXT_BRANCH}\`.")
 
           # Reuse the pull request an earlier run left open, rather than failing
