@@ -209,11 +209,33 @@ pub fn parse_bytecode(
     pending_rodata.extend(synthetic_rodata);
     pending_rodata.sort_by_key(|e| (e.section_index.0, e.address));
 
-    // Calculate each rodata entry's output offset.
+    // Calculate each rodata section's aligned output offset.
     let mut rodata_size = 0u64;
-    for entry in &mut pending_rodata {
-        entry.address_out = rodata_size;
-        rodata_size += entry.size;
+    let mut previous_entry: Option<&mut RodataEntry> = None;
+
+    for entries in
+        pending_rodata.chunk_by_mut(|a, b| a.section_index == b.section_index)
+    {
+        let section = &ro_sections[&entries[0].section_index];
+        let section_base =
+            rodata_size.next_multiple_of(section.align().max(1));
+
+        // Check if padding bytes are required before the next rodata section and apply if needed.
+        let padding = (section_base - rodata_size) as usize;
+        if let Some(previous) = previous_entry.take()
+            && padding > 0
+        {
+            previous
+                .bytes
+                .resize(previous.bytes.len() + padding, Number::Int(0));
+        }
+
+        for entry in &mut *entries {
+            entry.address_out = section_base + entry.address;
+        }
+
+        rodata_size = section_base + section.size();
+        previous_entry = entries.last_mut();
     }
 
     // Function to resolve an input section address to it's offset in the output rodata.
