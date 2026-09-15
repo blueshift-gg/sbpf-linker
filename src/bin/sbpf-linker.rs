@@ -120,48 +120,77 @@ fn parent_and_file_name(p: PathBuf) -> anyhow::Result<(PathBuf, PathBuf)> {
 fn find_solana_compiler_builtins_rlib(
     inputs: &[PathBuf],
 ) -> io::Result<Option<PathBuf>> {
-    if inputs.iter().any(|input| {
-        input.file_name().and_then(|name| name.to_str()).is_some_and(
+    let is_rlib = |path: &Path, prefix: &str| {
+        path.file_name().and_then(|name| name.to_str()).is_some_and(
             |file_name| {
-                file_name.starts_with("libsolana_compiler_builtins-")
-                    && file_name.ends_with(".rlib")
+                file_name.starts_with(prefix) && file_name.ends_with(".rlib")
             },
         )
-    }) {
+    };
+
+    if inputs
+        .iter()
+        .any(|input| is_rlib(input, "libsolana_compiler_builtins-"))
+    {
         return Ok(None);
     }
 
-    let Some(dep_dir) = inputs.iter().find_map(|input| {
-        let file_name = input.file_name()?.to_str()?;
-        if file_name.starts_with("libcompiler_builtins-")
-            && file_name.ends_with(".rlib")
-        {
-            input.parent()
-        } else {
-            None
-        }
-    }) else {
-        return Ok(None);
-    };
-    let mut latest = None;
-    for entry in fs::read_dir(dep_dir)? {
-        let path = entry?.path();
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str())
-        else {
-            continue;
-        };
-        if file_name.starts_with("libsolana_compiler_builtins-")
-            && file_name.ends_with(".rlib")
-        {
-            let modified = path.metadata()?.modified()?;
-            match &latest {
-                Some((latest_modified, _)) if modified <= *latest_modified => {
+    let mut search_dirs = Vec::new();
+    if let Some(dep_dir) = inputs
+        .iter()
+        .find(|input| is_rlib(input, "libcompiler_builtins-"))
+        .and_then(|input| input.parent())
+    {
+        search_dirs.push(dep_dir.to_path_buf());
+    }
+
+    // Cargo stores these artifacts under build/<crate>/<hash>/out. Cached
+    // target directories may contain more than one hash.
+    if let Some(build_dir) = inputs.iter().find_map(|input| {
+        input
+            .ancestors()
+            .find(|dir| dir.file_name().is_some_and(|name| name == "build"))
+    }) {
+        let solana_builtins_dir = build_dir.join("solana-compiler-builtins");
+        match fs::read_dir(solana_builtins_dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    search_dirs.push(entry?.path().join("out"));
                 }
-                _ => latest = Some((modified, path)),
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    let mut latest = None;
+    for dir in search_dirs {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            if is_rlib(&path, "libsolana_compiler_builtins-") {
+                let modified = path.metadata()?.modified()?;
+                match latest.as_ref() {
+                    Some((latest_modified, _))
+                        if modified <= *latest_modified => {}
+                    _ => latest = Some((modified, path)),
+                }
             }
         }
     }
-    Ok(latest.map(|(_, path)| path))
+    let latest = latest.map(|(_, path)| path);
+    if latest.is_none() {
+        eprintln!(
+            "warning: solana-compiler-builtins was not linked; code generation \
+             may fail for operations that require libcalls, and some operations \
+             may run less efficiently on the SVM"
+        );
+    }
+    Ok(latest)
 }
 
 #[derive(Debug, Parser)]
@@ -527,6 +556,43 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_solana_compiler_builtins_without_compiler_builtins_input() {
+        let temp = tempfile::tempdir().unwrap();
+        let build_dir =
+            temp.path().join("target/bpfel-unknown-none/release/build");
+        let dependency =
+            build_dir.join("pinocchio/pinocchio-hash/out/rustc-temp/object.o");
+        let solana_compiler_builtins = build_dir.join(
+            "solana-compiler-builtins/solana-hash/out/libsolana_compiler_builtins-solana-hash.rlib",
+        );
+        fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+        fs::create_dir_all(solana_compiler_builtins.parent().unwrap())
+            .unwrap();
+        fs::write(&dependency, []).unwrap();
+        fs::write(&solana_compiler_builtins, []).unwrap();
+
+        assert_eq!(
+            find_solana_compiler_builtins_rlib(&[dependency]).unwrap(),
+            Some(solana_compiler_builtins)
+        );
+    }
+
+    #[test]
+    fn continues_when_solana_compiler_builtins_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let dependency = temp.path().join(
+            "target/bpfel-unknown-none/release/build/pinocchio/hash/out/libpinocchio-hash.rlib",
+        );
+        fs::create_dir_all(dependency.parent().unwrap()).unwrap();
+        fs::write(&dependency, []).unwrap();
+
+        assert_eq!(
+            find_solana_compiler_builtins_rlib(&[dependency]).unwrap(),
+            None
+        );
+    }
 
     #[test]
     fn test_export_input_args() {
