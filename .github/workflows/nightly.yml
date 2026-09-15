@@ -11,41 +11,30 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  packages: read
-  pull-requests: write
+  contents: read
+
+env:
+  UPDATE_BRANCH: automation/update-rust-nightly
 
 jobs:
-  timing:
-    name: Resolve update cadence
-    runs-on: ubuntu-latest
-    outputs:
-      propose: ${{ steps.clock.outputs.propose }}
-    steps:
-      - name: Check update cadence
-        id: clock
-        env:
-          TZ: America/New_York
-        shell: bash
-        run: |
-          propose=false
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            propose=true
-          elif [[ "$(date +%u)" == "6" ]]; then
-            propose=true
-          fi
-
-          echo "propose=$propose" >> "$GITHUB_OUTPUT"
-
   update:
     name: Test and propose latest nightly
-    needs: timing
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     env:
       RUSTUP_TOOLCHAIN: nightly
     steps:
+      - name: Create the app token
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ steps.app_token.outputs.token }}
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -60,10 +49,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          commit_date=$(rustc --version --verbose | sed -n 's/^commit-date: //p')
-          test -n "$commit_date"
+          candidate=nightly-$(rustc --version --verbose | sed -n 's/^commit-date: //p')
+          [[ "$candidate" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+            echo "::error::could not resolve a commit-date from rustc"
+            exit 1
+          }
+          echo "toolchain=$candidate" >> "$GITHUB_OUTPUT"
 
-          echo "toolchain=nightly-${commit_date}" >> "$GITHUB_OUTPUT"
+          pinned=$(yq -e '.toolchain.channel' rust-toolchain.toml)
+
+          if [[ ! "$candidate" > "$pinned" ]]; then
+            echo "::notice::the pinned nightly ${pinned} is already current."
+            echo "propose=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          yq -i ".toolchain.channel = \"$candidate\"" rust-toolchain.toml
+          test "$(yq -e '.toolchain.channel' rust-toolchain.toml)" = "$candidate"
+          git add rust-toolchain.toml
+          echo "propose=true" >> "$GITHUB_OUTPUT"
+
           rustc --version --verbose
 
       - name: Install from source
@@ -82,36 +87,57 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/compiler-builtins-target
         run: .github/workflows/compiler-builtins/test.sh
 
-      - name: Update pinned nightly
-        if: needs.timing.outputs.propose == 'true'
+      - name: Propose the update
+        id: publish
+        if: steps.nightly.outputs.propose == 'true'
         env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
           CANDIDATE: ${{ steps.nightly.outputs.toolchain }}
         shell: bash
         run: |
           set -euo pipefail
 
-          current=$(yq -e '.toolchain.channel' rust-toolchain.toml)
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "ci: update pinned nightly to $CANDIDATE"
+          prev=$(git ls-remote origin "refs/heads/$UPDATE_BRANCH" | cut -f1)
+          git push --force-with-lease="refs/heads/$UPDATE_BRANCH:$prev" origin "HEAD:refs/heads/$UPDATE_BRANCH"
 
-          if [[ "$CANDIDATE" > "$current" ]]; then
-            yq -i '.toolchain.channel = strenv(CANDIDATE)' rust-toolchain.toml
-            test "$(yq -e '.toolchain.channel' rust-toolchain.toml)" = "$CANDIDATE"
+          title="ci: update pinned nightly to $CANDIDATE"
+          body="The daily compatibility check passed with \`$CANDIDATE\`. Merged automatically once the checks passed."
+
+          pr=$(gh pr list --state open --base master --head "$UPDATE_BRANCH" \
+            --json number --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh pr edit "$pr" --title "$title" --body "$body"
           else
-            echo "Pinned nightly ${current} is already current."
+            gh pr create --base master --head "$UPDATE_BRANCH" \
+              --title "$title" --body "$body"
+            pr=$(gh pr list --state open --base master --head "$UPDATE_BRANCH" \
+              --json number --jq '.[0].number')
           fi
 
-      - name: Create nightly update pull request
-        if: needs.timing.outputs.propose == 'true'
-        uses: peter-evans/create-pull-request@v8
-        with:
-          add-paths: rust-toolchain.toml
-          branch: automation/update-rust-nightly
-          delete-branch: true
-          commit-message: >-
-            ci: update pinned nightly to ${{ steps.nightly.outputs.toolchain }}
-          title: >-
-            ci: update pinned nightly to ${{ steps.nightly.outputs.toolchain }}
-          body: |
-            The daily compatibility check passed with `${{ steps.nightly.outputs.toolchain }}`.
+          echo "verifying pull request #$pr"
 
-            This updates the pinned toolchain in `rust-toolchain.toml` for both the
-            CI and local builds.
+          retries=15
+          until [[ -n "$(gh pr checks "$pr" --json state --jq '.[].state' || true)" ]]; do
+            if (( --retries <= 0 )); then
+              echo "::error::no checks were started for pull request #$pr, so it is not verified and is left open for a maintainer."
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if gh pr checks "$pr" --watch --fail-fast; then
+            echo "pr=$pr" >> "$GITHUB_OUTPUT"
+            echo "land=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::the checks for pull request #$pr did not pass, so the update is not verified. It is left open for a maintainer, and the next run will retry."
+            echo "The checks for pull request #$pr did not pass, so the update is not verified. It is left open for a maintainer." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Merge with a squash commit
+        if: steps.publish.outputs.land == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          PR: ${{ steps.publish.outputs.pr }}
+        run: gh pr merge "$PR" --squash --delete-branch
