@@ -11,340 +11,210 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
 
 env:
   MASTER_BRANCH: master
   NEXT_BRANCH: sbpf-linker-next
-  BOT_BRANCH: automation/sync-sbpf-linker-next
+  SYNC_BRANCH: automation/sync-master
+  PIN_BRANCH: automation/track-sbpf
   SBPF_REPOSITORY: https://github.com/blueshift-gg/sbpf.git
 
 jobs:
-  sync:
-    name: Prepare next-branch update
+  sync_master:
+    name: Merge master into sbpf-linker-next
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Create the app token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MASTER_BRANCH }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Propose and verify the merge
+        id: publish
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Bail if next branch doesn't exist
+          if ! git ls-remote --exit-code --heads origin "$NEXT_BRANCH" >/dev/null; then
+            echo "::error::$NEXT_BRANCH does not exist, so there is nothing to synchronize. If it was removed by accident, restore it."
+            exit 1
+          fi
+
+          # Check if there's an open sync PR
+          pr=$(gh pr list --state open --base "$NEXT_BRANCH" --head "$SYNC_BRANCH" \
+            --json number --jq '.[0].number // empty')
+
+          # Bail if next is already up-to-date with master
+          if git merge-base --is-ancestor "origin/$MASTER_BRANCH" "origin/$NEXT_BRANCH"; then
+            echo "::notice::$NEXT_BRANCH already contains every commit from $MASTER_BRANCH."
+            exit 0
+          fi
+
+          # Branch off of the sync PR branch if it exists. Otherwise, starts fresh from the next branch
+          if git ls-remote --exit-code --heads origin "$SYNC_BRANCH" >/dev/null; then
+            git fetch --no-tags origin "$SYNC_BRANCH"
+            git checkout -q -B "$SYNC_BRANCH" "origin/$SYNC_BRANCH"
+          else
+            git fetch --no-tags origin "$MASTER_BRANCH"
+            git checkout -q -B "$SYNC_BRANCH" "origin/$NEXT_BRANCH"
+          fi
+
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" merge --no-ff -q --no-edit "origin/$MASTER_BRANCH" || {
+            echo "::error::$MASTER_BRANCH does not merge cleanly into $NEXT_BRANCH. Resolve it on $SYNC_BRANCH, then dispatch this workflow from $SYNC_BRANCH to continue."
+            exit 1
+          }
+
+          git push origin "HEAD:refs/heads/$SYNC_BRANCH"
+
+          if [[ -z "$pr" ]]; then
+            body=$(printf '%s\n' \
+              "Merges \`$MASTER_BRANCH\` into \`$NEXT_BRANCH\`. CI runs on the merge commit of this pull request.")
+            pr_url=$(gh pr create --base "$NEXT_BRANCH" --head "$SYNC_BRANCH" \
+              --title "chore: merge $MASTER_BRANCH into $NEXT_BRANCH" \
+              --body "$body" | tail -n 1)
+            pr=${pr_url##*/}
+          else
+            echo "updating open sync pull request #$pr"
+          fi
+
+          echo "verifying pull request #$pr"
+
+          # Wait for the pull request's checks to be created, then for them to finish.
+          deadline=$((SECONDS + 600))
+          until [[ -n "$(gh pr checks "$pr" --json state --jq '.[].state' || true)" ]]; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::no checks were started for pull request #$pr. If they are waiting on approval, approve them there and re-run this job, or merge it by hand. It is left open for a maintainer."
+              exit 1
+            fi
+            sleep 20
+          done
+
+          head=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+
+          if gh pr checks "$pr" --watch --fail-fast; then
+            {
+              echo "pr=$pr"
+              echo "head=$head"
+              echo "land=true"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::the checks for pull request #$pr did not pass, so the merge is not verified. It is left open for a maintainer, and the next run will retry."
+            echo "The checks for pull request #$pr did not pass, so the merge is not verified. It is left open for a maintainer." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Merge with a merge commit
+        if: steps.publish.outputs.land == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          PR: ${{ steps.publish.outputs.pr }}
+          HEAD: ${{ steps.publish.outputs.head }}
+        run: gh pr merge "$PR" --merge --match-head-commit "$HEAD"
+
+  track_sbpf:
+    name: Track the sbpf pin
+    needs: sync_master
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Create the app token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
       - name: Checkout
-        id: checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: ${{ env.NEXT_BRANCH }}
+          token: ${{ steps.app_token.outputs.token }}
 
-      - name: Find upstream changes
-        id: changes
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Track sbpf master
+        id: bump
         shell: bash
         run: |
           set -euo pipefail
 
-          git fetch --no-tags origin \
-            "+refs/heads/${MASTER_BRANCH}:refs/remotes/origin/${MASTER_BRANCH}" \
-            "+refs/heads/${NEXT_BRANCH}:refs/remotes/origin/${NEXT_BRANCH}"
-
-          bot_exists=false
-          if git ls-remote --exit-code --heads origin "$BOT_BRANCH" >/dev/null; then
-            git fetch --no-tags origin \
-              "+refs/heads/${BOT_BRANCH}:refs/remotes/origin/${BOT_BRANCH}"
-            bot_exists=true
-          fi
-
-          git switch --force-create "$BOT_BRANCH" "origin/$NEXT_BRANCH"
-
-          latest_sbpf=$(git ls-remote "$SBPF_REPOSITORY" refs/heads/master \
-            | awk 'NR == 1 { print $1 }')
-          if [[ ! "$latest_sbpf" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Could not resolve blueshift-gg/sbpf master"
+          if ! tip=$(git ls-remote --exit-code "$SBPF_REPOSITORY" refs/heads/master | cut -f1); then
+            echo "::error::could not resolve sbpf master"
             exit 1
           fi
 
-          locked_sbpf=$(awk '
-            index($0, "source = \"git+https://github.com/blueshift-gg/sbpf.git?branch=master#") == 1 {
-              sub(/^.*#/, "")
-              sub(/\"$/, "")
-              print
-              exit
+          # Find the dependencies that track sbpf master in Cargo.toml and put them space-separated in `pkgs`
+          read -ra pkgs <<< "$(yq -r '(.dependencies // {}) + (.workspace.dependencies // {}) | to_entries | map(select(.value.git == strenv(SBPF_REPOSITORY) and .value.branch == "master") | .key) | join(" ")' Cargo.toml)"
+          [[ ${#pkgs[@]} -gt 0 ]] || { echo "::notice::no dependency tracks $SBPF_REPOSITORY master; nothing to track."; exit 0; }
+
+          # Build on the pull request's branch when it is available, so a change made
+          # there survives and the commit this run makes still descends from it.
+          pin_sha=$(git ls-remote origin "refs/heads/$PIN_BRANCH" | cut -f1)
+          if [[ -n "$pin_sha" ]]; then
+            git fetch --no-tags origin "$pin_sha"
+            git checkout -q -B "$PIN_BRANCH" FETCH_HEAD
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" merge -q --no-edit "origin/$NEXT_BRANCH" || {
+              echo "::error::$PIN_BRANCH conflicts with $NEXT_BRANCH. Please resolve."
+              exit 1
             }
-          ' Cargo.lock)
-          master_commits=$(git rev-list --count "HEAD..origin/$MASTER_BRANCH")
-          master_sha=$(git rev-parse "origin/$MASTER_BRANCH")
-
-          existing_pr=$(gh pr list \
-            --state open \
-            --base "$NEXT_BRANCH" \
-            --head "$BOT_BRANCH" \
-            --json number \
-            --jq '.[0].number // empty')
-
-          candidate_current=false
-          if [[ "$bot_exists" == true && -n "$existing_pr" ]]; then
-            bot_locked_sbpf=$(git show "origin/$BOT_BRANCH:Cargo.lock" | awk '
-              index($0, "source = \"git+https://github.com/blueshift-gg/sbpf.git?branch=master#") == 1 {
-                sub(/^.*#/, "")
-                sub(/\"$/, "")
-                print
-                exit
-              }
-            ')
-
-            if git merge-base --is-ancestor "origin/$NEXT_BRANCH" "origin/$BOT_BRANCH" \
-              && git merge-base --is-ancestor "origin/$MASTER_BRANCH" "origin/$BOT_BRANCH" \
-              && [[ "$bot_locked_sbpf" == "$latest_sbpf" ]]; then
-              candidate_current=true
-            fi
           fi
 
-          prepare=false
-          reason="sbpf-linker-next already contains the latest linker and sbpf changes"
-          if (( master_commits > 0 )) || [[ "$locked_sbpf" != "$latest_sbpf" ]]; then
-            prepare=true
-            reason="updates found"
+          # The sbpf revs tracked in Cargo.lock, read after the branch is checked out so
+          # that it reports the branch's own pin
+          pinned=$(NAMES="${pkgs[*]}" yq -p toml -o y -r '[.package[] | select(.name as $n | (strenv(NAMES) | split(" ")) | contains([$n])) | .source] | unique | join(", ")' Cargo.lock)
+
+          echo "moving ${pkgs[*]} from ${pinned:-none} to $tip"
+          cargo update "${pkgs[@]/#/-p}" --precise "$tip"
+
+          if [[ "${pinned##*#}" == "$tip" ]]; then
+            echo "::notice::already tracking sbpf master at $tip."
+            exit 0
           fi
-          if [[ "$candidate_current" == true ]]; then
-            prepare=false
-            reason="an up-to-date synchronization PR is already open (#${existing_pr})"
-          fi
 
-          {
-            echo "prepare=$prepare"
-            echo "reason=$reason"
-            echo "master_commits=$master_commits"
-            echo "master_sha=$master_sha"
-            echo "locked_sbpf=${locked_sbpf:-none}"
-            echo "latest_sbpf=$latest_sbpf"
-            echo "bot_exists=$bot_exists"
-          } >> "$GITHUB_OUTPUT"
+          git add Cargo.lock
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "chore: track sbpf master at ${tip:0:12}"
+          echo "pinned=${pinned##*#}" >> "$GITHUB_OUTPUT"
+          echo "rev=$tip" >> "$GITHUB_OUTPUT"
 
-      - name: Report no changes
-        if: steps.changes.outputs.prepare != 'true'
-        env:
-          REASON: ${{ steps.changes.outputs.reason }}
-          LOCKED_SBPF: ${{ steps.changes.outputs.locked_sbpf }}
-          LATEST_SBPF: ${{ steps.changes.outputs.latest_sbpf }}
-        run: |
-          {
-            echo "## No synchronization update needed"
-            echo
-            echo "$REASON."
-            echo
-            echo "- Locked sbpf commit: \`$LOCKED_SBPF\`"
-            echo "- Current sbpf master: \`$LATEST_SBPF\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Merge master into next
-        id: merge
-        if: steps.changes.outputs.prepare == 'true'
-        env:
-          MASTER_COMMITS: ${{ steps.changes.outputs.master_commits }}
+      - name: Push the bump and open the pull request
+        if: steps.bump.outputs.rev != ''
         shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          PINNED: ${{ steps.bump.outputs.pinned }}
+          REV: ${{ steps.bump.outputs.rev }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push origin "HEAD:refs/heads/$PIN_BRANCH"
 
-          if (( MASTER_COMMITS > 0 )); then
-            git merge --no-ff "origin/$MASTER_BRANCH" \
-              -m "Merge branch '$MASTER_BRANCH' into $NEXT_BRANCH"
-          fi
+          title="chore: track sbpf master at ${REV:0:12}"
+          body=$(printf '%s\n' \
+            "Moves the sbpf pin in \`Cargo.lock\` from \`${PINNED:0:12}\` to \`${REV:0:12}\`." \
+            "" \
+            "Upstream diff: https://github.com/blueshift-gg/sbpf/compare/${PINNED}...${REV}" \
+            "" \
+            "Merge this with a merge commit; DO NOT squash or rebase \`${NEXT_BRANCH}\`.")
 
-      - name: Resolve pinned Rust nightly
-        id: pinned
-        if: steps.changes.outputs.prepare == 'true'
-        run: |
-          channel=$(yq -e '.toolchain.channel' rust-toolchain.toml)
-          echo "toolchain=$channel" >> "$GITHUB_OUTPUT"
-
-      - name: Install Rust
-        id: toolchain
-        if: steps.changes.outputs.prepare == 'true'
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.pinned.outputs.toolchain }}
-
-      - name: Restore Cargo cache
-        id: cache
-        if: steps.changes.outputs.prepare == 'true'
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Update sbpf lockfile entries
-        id: dependency-update
-        if: >-
-          steps.changes.outputs.prepare == 'true' &&
-          steps.changes.outputs.locked_sbpf != steps.changes.outputs.latest_sbpf
-        env:
-          SBPF_SHA: ${{ steps.changes.outputs.latest_sbpf }}
-        run: cargo update -p sbpf-assembler --precise "$SBPF_SHA"
-
-      - name: Verify sbpf dependency resolution
-        id: metadata
-        if: steps.changes.outputs.prepare == 'true'
-        env:
-          SBPF_SHA: ${{ steps.changes.outputs.latest_sbpf }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cargo metadata --locked --format-version 1 \
-            > "$RUNNER_TEMP/linker-metadata.json"
-          expected_source="git+${SBPF_REPOSITORY}?branch=master#${SBPF_SHA}"
-
-          if ! jq -e --arg source "$expected_source" '
-            [.resolve.nodes[].id] as $resolved
-            | [.packages[]
-               | select(.id as $id | $resolved | index($id))
-               | select(.name | startswith("sbpf-"))
-               | select(.name != "sbpf-linker")] as $sbpf
-            | (["sbpf-assembler", "sbpf-common"] - ($sbpf | map(.name) | unique) | length == 0)
-              and all($sbpf[]; .source == $source)
-          ' "$RUNNER_TEMP/linker-metadata.json"; then
-            echo "::error::Not all sbpf packages resolve from sbpf master at $SBPF_SHA"
-            jq -r '
-              [.resolve.nodes[].id] as $resolved
-              | .packages[]
-              | select(.id as $id | $resolved | index($id))
-              | select(.name | startswith("sbpf-"))
-              | [.name, (.source // "local"), .manifest_path]
-              | @tsv
-            ' "$RUNNER_TEMP/linker-metadata.json"
-            exit 1
-          fi
-
-      - name: Commit lockfile update
-        id: commit
-        if: steps.changes.outputs.prepare == 'true'
-        env:
-          SBPF_SHA: ${{ steps.changes.outputs.latest_sbpf }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          changed_files=$(git diff --name-only)
-          if [[ -n "$changed_files" && "$changed_files" != "Cargo.lock" ]]; then
-            echo "::error::The dependency refresh unexpectedly changed files other than Cargo.lock"
-            printf '%s\n' "$changed_files"
-            exit 1
-          fi
-
-          if ! git diff --quiet -- Cargo.lock; then
-            git add Cargo.lock
-            git commit -m "chore: update sbpf master to ${SBPF_SHA:0:12}"
-          fi
-
-          git diff --check HEAD
-
-      - name: Push candidate and create pull request
-        id: publish
-        if: steps.changes.outputs.prepare == 'true'
-        env:
-          BOT_EXISTS: ${{ steps.changes.outputs.bot_exists }}
-          GH_TOKEN: ${{ github.token }}
-          MASTER_SHA: ${{ steps.changes.outputs.master_sha }}
-          SBPF_SHA: ${{ steps.changes.outputs.latest_sbpf }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "$BOT_BRANCH" != "automation/sync-sbpf-linker-next" \
-            || "$NEXT_BRANCH" != "sbpf-linker-next" \
-            || "$(git branch --show-current)" != "$BOT_BRANCH" ]]; then
-            echo "::error::Refusing to publish to an unexpected branch"
-            exit 1
-          fi
-
-          if [[ "$BOT_EXISTS" == true ]]; then
-            previous=$(git rev-parse "origin/$BOT_BRANCH")
-            git push \
-              --force-with-lease="refs/heads/${BOT_BRANCH}:${previous}" \
-              origin "HEAD:refs/heads/$BOT_BRANCH"
+          # Reuse the pull request an earlier run left open, rather than failing
+          # because one already exists for this branch.
+          pr=$(gh pr list --state open --base "$NEXT_BRANCH" --head "$PIN_BRANCH" \
+            --json number --jq '.[0].number // empty')
+          if [[ -n "$pr" ]]; then
+            gh pr edit "$pr" --title "$title" --body "$body"
           else
-            git push origin "HEAD:refs/heads/$BOT_BRANCH"
+            gh pr create --base "$NEXT_BRANCH" --head "$PIN_BRANCH" \
+              --title "$title" --body "$body"
           fi
-
-          pr_number=$(gh pr list \
-            --state open \
-            --base "$NEXT_BRANCH" \
-            --head "$BOT_BRANCH" \
-            --json number \
-            --jq '.[0].number // empty')
-
-          if [[ -z "$pr_number" ]]; then
-            body=$(printf '%s\n' \
-              'Automated synchronization of the long-lived integration branch.' \
-              '' \
-              "- sbpf-linker master: \`${MASTER_SHA}\`" \
-              "- sbpf master: \`${SBPF_SHA}\`" \
-              '' \
-              'The read-only CI workflow is dispatched on this candidate after the PR is created.' \
-              'Merge this PR with a merge commit; do not rebase sbpf-linker-next.')
-            pr_url=$(gh pr create \
-              --base "$NEXT_BRANCH" \
-              --head "$BOT_BRANCH" \
-              --title "chore: sync sbpf-linker-next" \
-              --body "$body")
-          else
-            pr_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/pull/${pr_number}"
-          fi
-
-          {
-            echo "## Synchronization candidate published"
-            echo
-            echo "- Pull request: $pr_url"
-            echo "- sbpf-linker master: \`$MASTER_SHA\`"
-            echo "- sbpf master: \`$SBPF_SHA\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Run read-only CI on the candidate
-        id: dispatch
-        if: steps.changes.outputs.prepare == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref "$BOT_BRANCH"
-
-      - name: Explain synchronization failure
-        if: ${{ always() && failure() }}
-        env:
-          CHECKOUT: ${{ steps.checkout.outcome }}
-          CHANGES: ${{ steps.changes.outcome }}
-          MERGE: ${{ steps.merge.outcome }}
-          PINNED: ${{ steps.pinned.outcome }}
-          TOOLCHAIN: ${{ steps.toolchain.outcome }}
-          CACHE: ${{ steps.cache.outcome }}
-          DEPENDENCY_UPDATE: ${{ steps.dependency-update.outcome }}
-          METADATA: ${{ steps.metadata.outcome }}
-          COMMIT: ${{ steps.commit.outcome }}
-          PUBLISH: ${{ steps.publish.outcome }}
-          DISPATCH: ${{ steps.dispatch.outcome }}
-        shell: bash
-        run: |
-          if [[ "$CHECKOUT" == failure || "$CHANGES" == failure ]]; then
-            message="Could not fetch the linker branches or resolve the latest sbpf master commit."
-          elif [[ "$MERGE" == failure ]]; then
-            message="master could not be merged cleanly into sbpf-linker-next; a maintainer must resolve the conflict."
-          elif [[ "$PINNED" == failure || "$TOOLCHAIN" == failure || "$CACHE" == failure ]]; then
-            message="The pinned Rust toolchain or Cargo cache could not be prepared."
-          elif [[ "$DEPENDENCY_UPDATE" == failure ]]; then
-            message="Cargo could not update the linker lockfile to the latest sbpf master commit."
-          elif [[ "$METADATA" == failure ]]; then
-            message="Cargo metadata did not resolve every sbpf package from the expected master commit."
-          elif [[ "$COMMIT" == failure ]]; then
-            message="The synchronization produced unexpected files or could not be committed."
-          elif [[ "$PUBLISH" == failure ]]; then
-            message="The candidate branch or same-repository pull request could not be published."
-          elif [[ "$DISPATCH" == failure ]]; then
-            message="The candidate was published, but the read-only CI workflow could not be started."
-          else
-            message="Synchronization failed during an unclassified setup step."
-          fi
-
-          echo "::error::$message"
-          {
-            echo "## Synchronization failed"
-            echo
-            echo "$message"
-          } >> "$GITHUB_STEP_SUMMARY"
