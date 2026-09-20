@@ -251,6 +251,19 @@ fn compile_test() {
             cfg.llvm_filecheck_preprocess = Some(SbpfV3::dump);
         }),
     );
+
+    run_mode::<SbpfV0, _>(
+        target,
+        "compile-fail",
+        &bpf_sysroot,
+        None::<fn(&mut compiletest_rs::Config)>,
+    );
+    run_mode::<SbpfV3, _>(
+        target,
+        "compile-fail",
+        &bpf_sysroot,
+        None::<fn(&mut compiletest_rs::Config)>,
+    );
 }
 
 // TODO: add below query methods to sbpf and update below to use them

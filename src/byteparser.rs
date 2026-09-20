@@ -3,7 +3,7 @@ use crate::{ProgramOptions, SbpfLinkerError};
 use sbpf_assembler::ast::{AST, build_program};
 use sbpf_assembler::astnode::{ASTNode, GlobalDecl, Label, ROData};
 use sbpf_assembler::section::DebugSection;
-use sbpf_assembler::{ProgramLayout, SbpfArch, Token};
+use sbpf_assembler::{CompileError, ProgramLayout, SbpfArch, Token};
 use sbpf_common::{
     inst_param::Number, instruction::Instruction, opcode::Opcode,
 };
@@ -427,17 +427,27 @@ pub fn parse_bytecode(
         })
         .collect::<Vec<_>>();
 
-    for overlap in
-        diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions)
-    {
-        tracing::error!(
-            function = %overlap.function,
-            local_start = overlap.local_stack.start,
-            local_end = overlap.local_stack.end,
-            argument_start = overlap.incoming_args.start,
-            argument_end = overlap.incoming_args.end,
-            "local stack variable overlaps incoming spilled-argument region"
-        );
+    let overlaps =
+        diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions);
+    if !overlaps.is_empty() {
+        let errors = overlaps
+            .into_iter()
+            .map(|overlap| CompileError::BytecodeError {
+                error: format!(
+                    "local stack variable overlaps incoming \
+                     spilled-argument region in `{}`: local [{}, {}) \
+                     overlaps argument [{}, {})",
+                    overlap.function,
+                    overlap.local_stack.start,
+                    overlap.local_stack.end,
+                    overlap.incoming_args.start,
+                    overlap.incoming_args.end,
+                ),
+                span: 0..1,
+                custom_label: None,
+            })
+            .collect();
+        return Err(SbpfLinkerError::BuildProgramError { errors });
     }
 
     rewrite_r11_stack_args(&mut ast, stack_frame_size)
@@ -449,172 +459,4 @@ pub fn parse_bytecode(
     parse_result.debug_sections = debug_sections;
 
     Ok(parse_result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::OptimizationConfig;
-
-    use object::write::{
-        Object as WriteObject, StandardSection, Symbol as WriteSymbol,
-        SymbolSection,
-    };
-    use object::{
-        Architecture, BinaryFormat, Endianness, SymbolFlags, SymbolKind,
-        SymbolScope,
-    };
-
-    use std::io;
-    use std::sync::{Arc, Mutex};
-
-    use tracing_subscriber::fmt::MakeWriter;
-
-    const LDXDW: u8 = 0x79;
-    const STXDW: u8 = 0x7b;
-    const EXIT: u8 = 0x95;
-
-    const R1: u8 = 1;
-    const R2: u8 = 2;
-    const R10: u8 = 10;
-    const R11: u8 = 11;
-
-    const STACK_FRAME_SIZE: i32 = 4096;
-
-    const OVERLAP_MESSAGE: &str =
-        "local stack variable overlaps incoming spilled-argument region";
-
-    /// Encode one 8-byte instruction as `[opcode][src<<4|dst][off][imm]`.
-    fn encode(opcode: u8, dst: u8, src: u8, off: i16, imm: i32) -> [u8; 8] {
-        let mut bytes = [0u8; 8];
-        bytes[0] = opcode;
-        bytes[1] = (src << 4) | (dst & 0x0f);
-        bytes[2..4].copy_from_slice(&off.to_le_bytes());
-        bytes[4..8].copy_from_slice(&imm.to_le_bytes());
-        bytes
-    }
-
-    /// A single-function body: one local store, one incoming argument load
-    /// at `arg_offset`, then `exit`. The argument load resolves to
-    /// `arg_offset - STACK_FRAME_SIZE`, which is what decides whether it
-    /// collides with the local at `local_offset`.
-    fn function_body(local_offset: i16, arg_offset: i16) -> Vec<u8> {
-        let mut text = Vec::new();
-        text.extend_from_slice(&encode(STXDW, R10, R1, local_offset, 0));
-        text.extend_from_slice(&encode(LDXDW, R2, R11, arg_offset, 0));
-        text.extend_from_slice(&encode(EXIT, 0, 0, 0, 0));
-        text
-    }
-
-    /// Wrap `text` in a minimal BPF object with one `entrypoint` symbol, so
-    /// the parser sees a function range to scan.
-    fn object_with_text(text: &[u8]) -> Vec<u8> {
-        let mut obj = WriteObject::new(
-            BinaryFormat::Elf,
-            Architecture::Bpf,
-            Endianness::Little,
-        );
-        let section = obj.section_id(StandardSection::Text);
-        let value = obj.append_section_data(section, text, 8);
-        obj.add_symbol(WriteSymbol {
-            name: b"entrypoint".to_vec(),
-            value,
-            size: text.len() as u64,
-            kind: SymbolKind::Text,
-            scope: SymbolScope::Linkage,
-            weak: false,
-            section: SymbolSection::Section(section),
-            flags: SymbolFlags::None,
-        });
-        obj.write().expect("writing test object")
-    }
-
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<Mutex<Vec<u8>>>);
-
-    impl LogBuffer {
-        fn contents(&self) -> String {
-            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
-        }
-    }
-
-    impl io::Write for LogBuffer {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> MakeWriter<'a> for LogBuffer {
-        type Writer = Self;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
-    /// Parse `text` with tracing captured, returning the parse result
-    /// alongside everything that was logged while it ran.
-    fn parse_capturing_logs(
-        text: &[u8],
-    ) -> (Result<ProgramLayout, SbpfLinkerError>, String) {
-        let logs = LogBuffer::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(logs.clone())
-            .with_ansi(false)
-            .finish();
-
-        let bytes = object_with_text(text);
-        let options = ProgramOptions::new(
-            OptimizationConfig::enabled(),
-            SbpfArch::V0,
-            STACK_FRAME_SIZE,
-        );
-
-        let result = tracing::subscriber::with_default(subscriber, || {
-            parse_bytecode(&bytes, options)
-        });
-
-        (result, logs.contents())
-    }
-
-    #[test]
-    fn overlapping_stack_arg_is_logged_and_codegen_continues() {
-        // The local at [r10-8] covers -8..0. The argument load at
-        // [r11+4088] resolves to -8..0 as well, so both name the same
-        // eight bytes of the frame.
-        let (result, logs) = parse_capturing_logs(&function_body(-8, 4088));
-
-        assert!(
-            result.is_ok(),
-            "codegen should continue past the diagnostic, got {:?}",
-            result.err()
-        );
-        assert!(
-            logs.contains(OVERLAP_MESSAGE),
-            "expected the overlap diagnostic, logged instead: {logs}"
-        );
-    }
-
-    #[test]
-    fn non_overlapping_stack_arg_is_not_logged() {
-        // Same shape, but the local now sits at -4096..-4088, clear of the
-        // -8..0 the argument load resolves to.
-        let (result, logs) = parse_capturing_logs(&function_body(-4096, 4088));
-
-        assert!(
-            result.is_ok(),
-            "parsing should succeed, got {:?}",
-            result.err()
-        );
-        assert!(
-            !logs.contains(OVERLAP_MESSAGE),
-            "regions do not overlap, but the diagnostic fired: {logs}"
-        );
-    }
 }
