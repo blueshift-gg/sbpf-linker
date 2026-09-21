@@ -1019,8 +1019,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-analyze"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01ca98374d7bccd3c65043868828695a68b10d8a599a78590d00adbede260b27"
 dependencies = [
  "sbpf-common",
  "sbpf-ir",
@@ -1029,8 +1030,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-assembler"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed713a0bfe6a909614a381ea36e827e8c450420d3fe05162c11d276e3d0c63dc"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1053,8 +1055,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b09569e3a66bb359bdf6f8fb62abf7f42ffe99466e0fb2306b4a40b8aa3cde9"
 dependencies = [
  "either",
  "num-derive",
@@ -1068,8 +1071,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common-derive"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5bad31501c01df7e2a71e22ade5fa1dbafc2e079daede75e3f254c4e47f25971"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1079,8 +1083,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common-tablegen"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ecdf6ce1164a689d7ca9a1bd7def73af0387146b84c1b1bb89835f27358b344"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1089,8 +1094,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-ir"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b58389fd8ec1b266af5e8b8f35be4f66d054b1be3e71e8b3c583f386b3793a0f"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1099,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "sbpf-linker"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "aya-rustc-llvm-proxy",
@@ -1123,8 +1129,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-syscall-map"
-version = "0.3.0"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#cc0837f655560cbb2a4c5a35d6495d28aa947d60"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7721fdf61d263c8013703dbea3d6d6c80d0226380e8a25311c4a2517085a5e7"
 
 [[package]]
 name = "scopeguard"
