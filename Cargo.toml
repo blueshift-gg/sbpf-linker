@@ -1,7 +1,7 @@
 [package]
 name = "sbpf-linker"
 edition = "2024"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["Claire Fan <claire@blueshift.gg>"]
 description = "Upstream BPF linker for SBPF V0/V3 programs"
 license = "MIT"
@@ -15,8 +15,8 @@ crate-type = ["cdylib", "lib"]
 name = "sbpf_linker"
 
 [dependencies]
-sbpf-assembler = { git = "https://github.com/blueshift-gg/sbpf.git", branch = "master" }
-sbpf-common = { git = "https://github.com/blueshift-gg/sbpf.git", branch = "master" }
+sbpf-assembler = "0.3.1"
+sbpf-common = "0.3.1"
 clap = { workspace = true }
 either = { version = "1.16.0", features = ["serde"] }
 object = { version = "0.40.0", features = ["write"] }
