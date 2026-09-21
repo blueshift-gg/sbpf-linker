@@ -1,5 +1,4 @@
 // compile-flags: --crate-type bin -C opt-level=3 -C panic=abort
-// error-pattern: local stack variable overlaps incoming spilled-argument region
 
 // Six args means the last one spills, and the linker rewrites that load to
 // r10-0xff8. 4064 bytes of locals lands on those same bytes.

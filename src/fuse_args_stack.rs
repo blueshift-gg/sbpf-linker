@@ -94,11 +94,15 @@ pub fn diagnose_stack_arg_overlaps(
                 if local_stack.start < incoming_args.end
                     && incoming_args.start < local_stack.end
                 {
-                    overlaps.push(StackRangeOverlap {
+                    let overlap = StackRangeOverlap {
                         function: function.name.clone(),
                         local_stack: local_stack.clone(),
                         incoming_args: incoming_args.clone(),
-                    });
+                    };
+                    // The same slot is often both stored to and loaded from.
+                    if !overlaps.contains(&overlap) {
+                        overlaps.push(overlap);
+                    }
                 }
             }
         }
