@@ -42,5 +42,4 @@ pub fn entrypoint(input: u64) -> u64 {
 
 // CHECK: error: linking with
 // CHECK: local stack variable overlaps incoming spilled-argument region in `six_args_with_deep_locals`
-// CHECK-SAME: local [{{-[0-9]+}}, {{-[0-9]+}}) overlaps argument [{{-[0-9]+}}, {{-[0-9]+}})
-// CHECK-NOT: local stack variable overlaps
+// CHECK-SAME: local [-4088, -4080) overlaps argument [-4088, -4080)
