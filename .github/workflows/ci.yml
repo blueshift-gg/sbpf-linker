@@ -113,6 +113,12 @@ jobs:
   coverage:
     name: coverage (nightly)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+    env:
+      IGNORE_FILENAME_REGEX: 'src/bin/sbpf-linker\.rs$'
     steps:
       - uses: actions/checkout@v4
 
@@ -156,7 +162,7 @@ jobs:
             --package sbpf-linker \
             --all-targets \
             --color never \
-            --ignore-filename-regex 'src/bin/sbpf-linker\.rs$' \
+            --ignore-filename-regex "$IGNORE_FILENAME_REGEX" \
             --fail-under-lines "$MINIMUM_LINE_COVERAGE" \
             | tee coverage.txt || coverage_status=$?
 
@@ -171,3 +177,21 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           exit "$coverage_status"
+
+      - name: Export LCOV
+        if: ${{ !cancelled() }}
+        run: |
+          cargo llvm-cov report \
+            --package sbpf-linker \
+            --lcov \
+            --output-path lcov.info \
+            --ignore-filename-regex "$IGNORE_FILENAME_REGEX" \
+            --color never
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
+          files: lcov.info
+          fail_ci_if_error: false
