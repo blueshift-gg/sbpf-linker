@@ -4,6 +4,11 @@
 <p align="center">
   An upstream BPF linker to relink upstream BPF binaries into an SBPF V0/V3 compatible binary format.
 </p>
+<p align="center">
+  <a href="https://codecov.io/gh/blueshift-gg/sbpf-linker">
+    <img src="https://codecov.io/gh/blueshift-gg/sbpf-linker/graph/badge.svg" alt="codecov">
+  </a>
+</p>
 
 ## Installation
 
