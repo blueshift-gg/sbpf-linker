@@ -6,7 +6,7 @@ use std::{
     ffi::OsString,
     fs, io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 
 use either::Either;
@@ -83,23 +83,33 @@ fn find_binary(binary_re_str: &str) -> PathBuf {
     binary.next().unwrap_or_else(|| panic!("could not find {binary_re_str}"))
 }
 
+fn linker_rustcflags<A: TestArch>(sysroot: &Path) -> Vec<String> {
+    let cpu = match A::ARCH {
+        SbpfArch::V0 => "v2",
+        SbpfArch::V3 => "v4",
+    };
+    vec![
+        "-C".to_owned(),
+        format!("linker={}", env!("CARGO_BIN_EXE_sbpf-linker")),
+        "-C".to_owned(),
+        format!("target-cpu={cpu}"),
+        "-C".to_owned(),
+        "target-feature=+allows-misaligned-mem-access".to_owned(),
+        "-C".to_owned(),
+        format!("link-arg=--arch={}", A::arch_arg()),
+        "-C".to_owned(),
+        "link-arg=--llvm-args=--bpf-stack-size=4096".to_owned(),
+        "--sysroot".to_owned(),
+        sysroot.display().to_string(),
+    ]
+}
+
 fn run_mode<A, F>(target: &str, mode: &str, sysroot: &Path, cfg: Option<F>)
 where
     A: TestArch,
     F: Fn(&mut compiletest_rs::Config),
 {
-    let arch_arg = A::arch_arg();
-    let cpu = match A::ARCH {
-        SbpfArch::V0 => "v2",
-        SbpfArch::V3 => "v4",
-    };
-    let target_rustcflags = format!(
-        "-C linker={} -C target-cpu={} -C target-feature=+allows-misaligned-mem-access -C link-arg=--arch={} -C link-arg=--llvm-args=--bpf-stack-size=4096 --sysroot {}",
-        env!("CARGO_BIN_EXE_sbpf-linker"),
-        cpu,
-        arch_arg,
-        sysroot.display()
-    );
+    let target_rustcflags = linker_rustcflags::<A>(sysroot).join(" ");
 
     let llvm_filecheck = Some(find_binary(r"^FileCheck(-\d+)?$"));
 
@@ -124,6 +134,106 @@ where
     compiletest_rs::run_tests(&config);
 }
 
+fn run_compile_fail_mode<A: TestArch>(target: &str, sysroot: &Path) {
+    let src_base = Path::new("tests/compile-fail");
+    let fixtures = fixtures_for_arch::<A>(src_base)
+        .expect("failed to collect compile-fail fixtures");
+    if fixtures.is_empty() {
+        return;
+    }
+
+    let filecheck = find_binary(r"^FileCheck(-\d+)?$");
+    let build_dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("compile-fail")
+        .join(A::arch_arg());
+
+    for fixture in fixtures {
+        let out_dir = build_dir.join(fixture.file_stem().unwrap_or_default());
+        let aux_dir = out_dir.join("auxiliary");
+        fs::create_dir_all(&aux_dir).unwrap_or_else(|err| {
+            panic!("failed to create {}: {err}", aux_dir.display())
+        });
+
+        let contents = read_fixture(&fixture);
+        for aux in header_values(&contents, "aux-build") {
+            let aux_src = fixture
+                .parent()
+                .unwrap_or(src_base)
+                .join("auxiliary")
+                .join(aux);
+            let built = compile_fixture::<A>(
+                target, sysroot, &aux_src, &aux_dir, &aux_dir,
+            );
+            assert!(
+                built.status.success(),
+                "failed to build {}:\n{}",
+                aux_src.display(),
+                String::from_utf8_lossy(&built.stderr)
+            );
+        }
+
+        let compiled = compile_fixture::<A>(
+            target, sysroot, &fixture, &out_dir, &aux_dir,
+        );
+        assert!(
+            !compiled.status.success(),
+            "{} compiled for {}, expected the linker to reject it",
+            fixture.display(),
+            A::arch_arg()
+        );
+
+        let diagnostics = out_dir.join("diagnostics.txt");
+        fs::write(&diagnostics, &compiled.stderr).unwrap_or_else(|err| {
+            panic!("failed to write {}: {err}", diagnostics.display())
+        });
+
+        let checked = Command::new(&filecheck)
+            .arg("--input-file")
+            .arg(&diagnostics)
+            .arg(&fixture)
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run FileCheck: {err}"));
+        assert!(
+            checked.status.success(),
+            "FileCheck failed on {} for {}:\n{}",
+            fixture.display(),
+            A::arch_arg(),
+            String::from_utf8_lossy(&checked.stderr)
+        );
+    }
+}
+
+fn compile_fixture<A: TestArch>(
+    target: &str,
+    sysroot: &Path,
+    src: &Path,
+    out_dir: &Path,
+    aux_dir: &Path,
+) -> Output {
+    let contents = read_fixture(src);
+    let mut rustc = rustc_cmd();
+    rustc
+        .arg("--target")
+        .arg(target)
+        .args(linker_rustcflags::<A>(sysroot))
+        .arg("-L")
+        .arg(aux_dir)
+        .arg("--out-dir")
+        .arg(out_dir);
+    for flags in header_values(&contents, "compile-flags") {
+        rustc.args(flags.split_whitespace());
+    }
+    rustc.arg(src).output().unwrap_or_else(|err| {
+        panic!("failed to run rustc on {}: {err}", src.display())
+    })
+}
+
+fn read_fixture(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|err| {
+        panic!("failed to read {}: {err}", path.display())
+    })
+}
+
 fn sbpf_dump<A: TestArch>(src: &Path, dst: &Path) {
     let dump = render_emitted_program::<A>(src).unwrap_or_else(|err| {
         panic!("failed to render {}: {err}", src.display())
@@ -138,15 +248,13 @@ fn test_filters_for_arch<A: TestArch>(
 ) -> io::Result<Vec<String>> {
     let suite_name =
         src_base.file_name().unwrap_or_default().to_string_lossy();
-    let arch_arg = A::arch_arg();
-    let mut filters = Vec::new();
-    collect_test_filters_for_arch(
-        src_base,
-        src_base,
-        &suite_name,
-        &mut filters,
-        &arch_arg,
-    )?;
+    let mut filters = fixtures_for_arch::<A>(src_base)?
+        .iter()
+        .map(|path| {
+            let relative_path = path.strip_prefix(src_base).unwrap_or(path);
+            format!("{suite_name}/{}", relative_path.display())
+        })
+        .collect::<Vec<_>>();
     filters.sort();
     if filters.is_empty() {
         filters.push(NO_TESTS_FILTER.to_owned());
@@ -154,28 +262,32 @@ fn test_filters_for_arch<A: TestArch>(
     Ok(filters)
 }
 
-fn collect_test_filters_for_arch(
+fn fixtures_for_arch<A: TestArch>(
     src_base: &Path,
+) -> io::Result<Vec<PathBuf>> {
+    let mut fixtures = Vec::new();
+    collect_fixtures_for_arch(src_base, &A::arch_arg(), &mut fixtures)?;
+    fixtures.sort();
+    Ok(fixtures)
+}
+
+fn collect_fixtures_for_arch(
     dir: &Path,
-    suite_name: &str,
-    filters: &mut Vec<String>,
     arch_arg: &str,
+    fixtures: &mut Vec<PathBuf>,
 ) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            // Compiletest builds auxiliary crates only when a fixture requests them.
+            // Auxiliary crates are dependencies of a fixture, not fixtures.
             if entry.file_name() != "auxiliary" {
-                collect_test_filters_for_arch(
-                    src_base, &path, suite_name, filters, arch_arg,
-                )?;
+                collect_fixtures_for_arch(&path, arch_arg, fixtures)?;
             }
         } else if path.extension().is_some_and(|extension| extension == "rs")
             && !ignored_for_arch(&path, arch_arg)?
         {
-            let relative_path = path.strip_prefix(src_base).unwrap_or(&path);
-            filters.push(format!("{suite_name}/{}", relative_path.display()));
+            fixtures.push(path);
         }
     }
     Ok(())
@@ -183,17 +295,25 @@ fn collect_test_filters_for_arch(
 
 fn ignored_for_arch(path: &Path, arch_arg: &str) -> io::Result<bool> {
     let contents = fs::read_to_string(path)?;
-    Ok(contents.lines().any(|line| {
+    Ok(header_values(&contents, "ignore-sbpf-arch").any(|ignored_arches| {
+        ignored_arches
+            .split([',', ' ', '\t'])
+            .any(|ignored_arch| ignored_arch.trim() == arch_arg)
+    }))
+}
+
+fn header_values<'a>(
+    contents: &'a str,
+    directive: &'a str,
+) -> impl Iterator<Item = &'a str> {
+    contents.lines().filter_map(move |line| {
         line.trim_start()
             .strip_prefix("//")
             .map(str::trim_start)
-            .and_then(|line| line.strip_prefix("ignore-sbpf-arch:"))
-            .is_some_and(|ignored_arches| {
-                ignored_arches
-                    .split([',', ' ', '\t'])
-                    .any(|ignored_arch| ignored_arch.trim() == arch_arg)
-            })
-    }))
+            .and_then(|line| line.strip_prefix(directive))
+            .and_then(|line| line.strip_prefix(':'))
+            .map(str::trim)
+    })
 }
 
 #[test]
@@ -201,7 +321,9 @@ fn compile_test() {
     // Assembly fixtures live in `tests/assembly`. Each file is a tiny Rust
     // crate with compiletest directives at the top and inline `CHECK:` lines
     // at the bottom. Use `// ignore-sbpf-arch: v0` or `v3` to skip a fixture
-    // for one linker arch. Run just this harness with:
+    // for one linker arch. `tests/compile-fail` fixtures work the same way,
+    // except the compile has to fail and the `CHECK:` lines are matched
+    // against the diagnostics. Run just this harness with:
     //
     // `cargo test --test tests compile_test -- --nocapture`
     //
@@ -251,6 +373,9 @@ fn compile_test() {
             cfg.llvm_filecheck_preprocess = Some(SbpfV3::dump);
         }),
     );
+
+    run_compile_fail_mode::<SbpfV0>(target, &bpf_sysroot);
+    run_compile_fail_mode::<SbpfV3>(target, &bpf_sysroot);
 }
 
 // TODO: add below query methods to sbpf and update below to use them

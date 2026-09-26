@@ -86,6 +86,11 @@ pub fn diagnose_stack_arg_overlaps(
             }
         }
 
+        locals.sort_unstable_by_key(|range| (range.start, range.end));
+        locals.dedup();
+        arguments.sort_unstable_by_key(|range| (range.start, range.end));
+        arguments.dedup();
+
         for local_stack in &locals {
             for incoming_args in &arguments {
                 if local_stack.start < incoming_args.end
