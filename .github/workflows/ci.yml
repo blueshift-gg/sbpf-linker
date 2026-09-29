@@ -78,7 +78,7 @@ jobs:
           output=$(rustup run "${{ steps.pinned.outputs.toolchain }}" \
             target/cargo-install/bin/sbpf-linker --version)
           echo "$output"
-          grep -F "LLVM 23" <<< "$output"
+          grep -F "LLVM dynamically linked at runtime" <<< "$output"
       - name: Verify LLVM is loaded through the runtime proxy
         run: |
           case "$RUNNER_OS" in
