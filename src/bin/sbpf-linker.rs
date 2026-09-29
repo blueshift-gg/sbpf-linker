@@ -342,14 +342,27 @@ where
             }
             ErrorKind::DisplayVersion => {
                 print!("{err}");
-                let (mut major, mut minor, mut patch) = (0, 0, 0);
-                // SAFETY: LLVMGetVersion only writes to the three valid output pointers.
-                unsafe {
-                    bpf_linker::llvm_sys::core::LLVMGetVersion(
-                        &mut major, &mut minor, &mut patch,
+                #[cfg(feature = "rust-llvm")]
+                {
+                    println!("LLVM dynamically linked at runtime");
+                    println!(
+                        "Warning: not recommended; \
+                         use `cargo binstall sbpf-linker`, or \
+                         ensure you're running nightly 100+ when \
+                         building Solana programs."
                     );
                 }
-                println!("LLVM {major}.{minor}.{patch}");
+                #[cfg(not(feature = "rust-llvm"))]
+                {
+                    let (mut major, mut minor, mut patch) = (0, 0, 0);
+                    // SAFETY: LLVMGetVersion only writes to the three valid output pointers.
+                    unsafe {
+                        bpf_linker::llvm_sys::core::LLVMGetVersion(
+                            &mut major, &mut minor, &mut patch,
+                        );
+                    }
+                    println!("LLVM {major}.{minor}.{patch}");
+                }
                 std::process::exit(0);
             }
             _ => return Err(err.into()),
