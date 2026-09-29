@@ -183,13 +183,6 @@ fn find_solana_compiler_builtins_rlib(
         }
     }
     let latest = latest.map(|(_, path)| path);
-    if latest.is_none() {
-        eprintln!(
-            "warning: solana-compiler-builtins was not linked; code generation \
-             may fail for operations that require libcalls, and some operations \
-             may run less efficiently on the SVM"
-        );
-    }
     Ok(latest)
 }
 
@@ -511,8 +504,6 @@ fn main() -> anyhow::Result<()> {
         inputs.iter().map(|p| LinkerInput::new_from_file(p.as_path()));
 
     linker.link_to_file(inputs, &output, output_type, export_symbols)?;
-
-    print!("{:?}", output);
 
     if fatal_errors && linker.has_errors() {
         return Err(anyhow::anyhow!(
