@@ -178,7 +178,7 @@ fn add_rodata_relocation(
 
 fn parse_object(
     object: Object<'_>,
-) -> Result<sbpf_assembler::ProgramLayout, SbpfLinkerError> {
+) -> Result<sbpf_assembler::ProgramLayout, Vec<SbpfLinkerError>> {
     let bytes = object.write().expect("failed to write object");
     parse_bytecode(
         &bytes,
@@ -195,9 +195,12 @@ fn assert_rodata_relocation_error(
     expected_address: u64,
     expected_detail: &str,
 ) {
-    let error = match parse_object(object) {
+    let errors = match parse_object(object) {
         Ok(_) => panic!("expected rodata relocation to fail"),
-        Err(error) => error,
+        Err(errors) => errors,
+    };
+    let [error] = errors.as_slice() else {
+        panic!("expected one error, got {errors:?}");
     };
     match error {
         SbpfLinkerError::RodataRelocationError {
@@ -206,7 +209,7 @@ fn assert_rodata_relocation_error(
             detail,
         } => {
             assert_eq!(section, ".rodata");
-            assert_eq!(address, expected_address);
+            assert_eq!(*address, expected_address);
             assert_eq!(detail, expected_detail);
         }
         _ => panic!("expected RodataRelocationError"),
