@@ -532,7 +532,10 @@ fn main() -> anyhow::Result<()> {
     let bytecode = link_program(
         &program,
         ProgramOptions::new(sbpf_optimization, arch.0, stack_frame_size),
-    )?;
+    )
+    .map_err(|errors| {
+        anyhow::anyhow!("{}", SbpfLinkerError::format_errors(&errors))
+    })?;
 
     let src_name = std::path::Path::new(&output)
         .file_stem()
