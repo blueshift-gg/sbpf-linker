@@ -47,11 +47,12 @@ struct RodataEntry {
 pub fn parse_bytecode(
     bytes: &[u8],
     options: ProgramOptions,
-) -> Result<ProgramLayout, SbpfLinkerError> {
+) -> Result<ProgramLayout, Vec<SbpfLinkerError>> {
     let ProgramOptions { optimization, arch, stack_frame_size } = options;
     let mut ast = AST::new();
+    let mut errors: Vec<SbpfLinkerError> = Vec::new();
 
-    let obj = File::parse(bytes)?;
+    let obj = File::parse(bytes).map_err(|error| vec![error.into()])?;
 
     // Track all read-only sections including .rodata* and .data.rel.ro* sections.
     // .data.rel.ro* is read-only after load-time pointer patching and can be
@@ -254,7 +255,8 @@ pub fn parse_bytecode(
     let mut rodata_target_nodes = Vec::new();
     for (section_index, ro_section) in &ro_sections {
         let section_name = ro_section.name().unwrap_or("<invalid>");
-        let section_data = ro_section.data()?;
+        let section_data =
+            ro_section.data().map_err(|error| vec![error.into()])?;
         for (relocation_address, rel) in ro_section.relocations() {
             let relocation_error =
                 |detail: &str| SbpfLinkerError::RodataRelocationError {
@@ -263,59 +265,68 @@ pub fn parse_bytecode(
                     detail: detail.to_owned(),
                 };
 
-            let Symbol(symbol_index) = rel.target() else {
-                return Err(relocation_error("invalid relocation target"));
-            };
-            let symbol = obj.symbol_by_index(symbol_index)?;
-            let target_section = symbol.section_index().ok_or_else(|| {
-                relocation_error("relocation target has no section")
-            })?;
-            let addend = if rel.has_implicit_addend() {
-                let stored = section_data
-                    .get(
-                        relocation_address as usize
-                            ..relocation_address as usize + 8,
-                    )
-                    .ok_or_else(|| {
-                        relocation_error("relocation location out of bounds")
+            let result: Result<(), SbpfLinkerError> = (|| {
+                let Symbol(symbol_index) = rel.target() else {
+                    return Err(relocation_error("invalid relocation target"));
+                };
+                let symbol = obj.symbol_by_index(symbol_index)?;
+                let target_section =
+                    symbol.section_index().ok_or_else(|| {
+                        relocation_error("relocation target has no section")
                     })?;
-                i64::from_le_bytes(stored.try_into().unwrap())
-            } else {
-                rel.addend()
-            };
-            let relocation_offset = resolve_rodata_output_offset(
-                *section_index,
-                relocation_address,
-            )
-            .ok_or_else(|| {
-                relocation_error("relocation location is not rodata")
-            })?;
+                let addend = if rel.has_implicit_addend() {
+                    let stored = section_data
+                        .get(
+                            relocation_address as usize
+                                ..relocation_address as usize + 8,
+                        )
+                        .ok_or_else(|| {
+                            relocation_error(
+                                "relocation location out of bounds",
+                            )
+                        })?;
+                    i64::from_le_bytes(stored.try_into().unwrap())
+                } else {
+                    rel.addend()
+                };
+                let relocation_offset = resolve_rodata_output_offset(
+                    *section_index,
+                    relocation_address,
+                )
+                .ok_or_else(|| {
+                    relocation_error("relocation location is not rodata")
+                })?;
 
-            let target = symbol.address().wrapping_add(addend as u64);
+                let target = symbol.address().wrapping_add(addend as u64);
 
-            let target_name = resolve_rodata_label(
-                target_section,
-                target,
-                &pending_rodata,
-                &mut rodata_target_labels,
-                &mut rodata_target_nodes,
-            )
-            .or_else(|| {
-                resolve_text_label(
+                let target_name = resolve_rodata_label(
                     target_section,
                     target,
-                    &text_section_bases,
-                    text_size,
-                    &mut labels_by_offset,
-                    &mut synthetic_labels_by_offset,
+                    &pending_rodata,
+                    &mut rodata_target_labels,
+                    &mut rodata_target_nodes,
                 )
-            })
-            .ok_or_else(|| {
-                relocation_error("relocation target is not rodata or text")
-            })?;
+                .or_else(|| {
+                    resolve_text_label(
+                        target_section,
+                        target,
+                        &text_section_bases,
+                        text_size,
+                        &mut labels_by_offset,
+                        &mut synthetic_labels_by_offset,
+                    )
+                })
+                .ok_or_else(|| {
+                    relocation_error("relocation target is not rodata or text")
+                })?;
 
-            // Add the relocation to the AST.
-            ast.add_rodata_relocation(relocation_offset, target_name);
+                // Add the relocation to the AST.
+                ast.add_rodata_relocation(relocation_offset, target_name);
+                Ok(())
+            })();
+            if let Err(error) = result {
+                errors.push(error);
+            }
         }
     }
 
@@ -331,138 +342,151 @@ pub fn parse_bytecode(
             let mut offset = 0;
             while offset < section_data.len() {
                 let data = &section_data[offset..];
-                let instruction = decode_instruction_for_arch(data, arch);
-                if let Err(error) = instruction {
-                    return Err(SbpfLinkerError::InstructionParseError(
-                        error.to_string(),
-                    ));
+                match decode_instruction_for_arch(data, arch) {
+                    Ok(instruction) => {
+                        let node_len = match instruction.opcode {
+                            Opcode::Lddw => 16,
+                            _ => 8,
+                        };
+                        ast.nodes.push(ASTNode::Instruction {
+                            instruction,
+                            offset: section_base + offset as u64,
+                        });
+                        offset += node_len;
+                    }
+                    Err(error) => {
+                        errors.push(SbpfLinkerError::InstructionParseError(
+                            error.to_string(),
+                        ));
+                        return Err(errors);
+                    }
                 }
-                let node_len = match instruction.as_ref().unwrap().opcode {
-                    Opcode::Lddw => 16,
-                    _ => 8,
-                };
-                ast.nodes.push(ASTNode::Instruction {
-                    instruction: instruction.unwrap(),
-                    offset: section_base + offset as u64,
-                });
-                offset += node_len;
             }
 
             // handle relocations
             let section_name =
                 section.name().unwrap_or("<invalid>").to_owned();
             for rel in section.relocations() {
-                let rel_target = rel.1.target();
-                let rel_addend = rel.1.addend();
-                let rel_has_implicit_addend = rel.1.has_implicit_addend();
+                let result: Result<(), SbpfLinkerError> = (|| {
+                    let rel_target = rel.1.target();
+                    let rel_addend = rel.1.addend();
+                    let rel_has_implicit_addend = rel.1.has_implicit_addend();
 
-                // handle relocations for call targets and rodata referenced by lddw
-                let symbol = match rel_target {
-                    Symbol(sym) => obj.symbol_by_index(sym).unwrap(),
-                    _ => continue,
-                };
+                    // handle relocations for call targets and rodata referenced by lddw
+                    let symbol = match rel_target {
+                        Symbol(sym) => obj.symbol_by_index(sym)?,
+                        _ => return Ok(()),
+                    };
 
-                let node: &mut Instruction = ast
-                    .get_instruction_at_offset(section_base + rel.0)
-                    .unwrap();
+                    let Some(node) =
+                        ast.get_instruction_at_offset(section_base + rel.0)
+                    else {
+                        return Err(SbpfLinkerError::InstructionParseError(
+                            format!(
+                                "relocation at offset {:#x} in section {section_name} does not point at an instruction",
+                                rel.0
+                            ),
+                        ));
+                    };
 
-                if node.opcode == Opcode::Lddw {
-                    let relocation_error =
-                        |detail: &str| SbpfLinkerError::LddwRelocationError {
-                            section: section_name.clone(),
-                            address: rel.0,
-                            detail: detail.to_owned(),
+                    if node.opcode == Opcode::Lddw {
+                        let relocation_error = |detail: &str| {
+                            SbpfLinkerError::LddwRelocationError {
+                                section: section_name.clone(),
+                                address: rel.0,
+                                detail: detail.to_owned(),
+                            }
                         };
 
-                    let addend = if rel_has_implicit_addend {
-                        match node.imm {
-                            Some(Either::Right(
-                                Number::Int(val) | Number::Addr(val),
-                            )) => val,
-                            _ => rel_addend,
-                        }
-                    } else {
-                        rel_addend
-                    };
-                    let target_section =
-                        symbol.section_index().ok_or_else(|| {
-                            relocation_error(
-                                "relocation target has no section",
-                            )
-                        })?;
-                    let target = symbol
-                        .address()
-                        .checked_add_signed(addend)
-                        .ok_or_else(|| {
-                        relocation_error("relocation target overflow")
-                    })?;
-
-                    let target_name = resolve_rodata_label(
-                        target_section,
-                        target,
-                        &pending_rodata,
-                        &mut rodata_target_labels,
-                        &mut rodata_target_nodes,
-                    )
-                    .or_else(|| {
-                        resolve_text_label(
-                            target_section,
-                            target,
-                            &text_section_bases,
-                            text_size,
-                            &mut labels_by_offset,
-                            &mut synthetic_labels_by_offset,
-                        )
-                    })
-                    .ok_or_else(|| {
-                        relocation_error(
-                            "relocation target is not rodata or text",
-                        )
-                    })?;
-                    // Replace the immediate value with the rodata label
-                    node.imm = Some(Either::Left(target_name));
-                } else if node.opcode == Opcode::Call {
-                    if symbol.kind() == object::SymbolKind::Section {
-                        let addend_i64 = if rel_has_implicit_addend {
-                            // If relocation uses implicit addend, use `node.imm`
-                            match &node.imm {
+                        let addend = if rel_has_implicit_addend {
+                            match node.imm {
                                 Some(Either::Right(
                                     Number::Int(val) | Number::Addr(val),
-                                )) => *val,
+                                )) => val,
                                 _ => rel_addend,
                             }
                         } else {
-                            // Otherwise use explicit relocation addend
                             rel_addend
                         };
+                        let target_section =
+                            symbol.section_index().ok_or_else(|| {
+                                relocation_error(
+                                    "relocation target has no section",
+                                )
+                            })?;
+                        let target = symbol
+                            .address()
+                            .checked_add_signed(addend)
+                            .ok_or_else(|| {
+                                relocation_error("relocation target overflow")
+                            })?;
 
-                        let target_section_base =
-                            symbol.section_index().and_then(|idx| {
-                                text_section_bases.get(&idx).copied()
-                            });
-
-                        let resolved_target_offset = target_section_base
-                            .zip(addend_i64.checked_add(1))
-                            .and_then(|(section_base, slots)| {
-                                let slots = u64::try_from(slots).ok()?;
-                                let local = slots
-                                    .checked_mul(8)?
-                                    .checked_add(symbol.address())?;
-                                section_base.checked_add(local)
-                            })
-                            .filter(|target| *target < text_size);
-
-                        let target_name = if let Some(target_offset) =
-                            resolved_target_offset
-                        {
-                            if let Some(existing_name) =
-                                labels_by_offset.get(&target_offset)
-                            {
-                                // Use known label
-                                existing_name.clone()
+                        let target_name = resolve_rodata_label(
+                            target_section,
+                            target,
+                            &pending_rodata,
+                            &mut rodata_target_labels,
+                            &mut rodata_target_nodes,
+                        )
+                        .or_else(|| {
+                            resolve_text_label(
+                                target_section,
+                                target,
+                                &text_section_bases,
+                                text_size,
+                                &mut labels_by_offset,
+                                &mut synthetic_labels_by_offset,
+                            )
+                        })
+                        .ok_or_else(|| {
+                            relocation_error(
+                                "relocation target is not rodata or text",
+                            )
+                        })?;
+                        // Replace the immediate value with the rodata label
+                        node.imm = Some(Either::Left(target_name));
+                    } else if node.opcode == Opcode::Call {
+                        if symbol.kind() == object::SymbolKind::Section {
+                            let addend_i64 = if rel_has_implicit_addend {
+                                // If relocation uses implicit addend, use `node.imm`
+                                match &node.imm {
+                                    Some(Either::Right(
+                                        Number::Int(val) | Number::Addr(val),
+                                    )) => *val,
+                                    _ => rel_addend,
+                                }
                             } else {
-                                // If label is not known, create and use a synthetic label
-                                let synthetic_name =
+                                // Otherwise use explicit relocation addend
+                                rel_addend
+                            };
+
+                            let target_section_base =
+                                symbol.section_index().and_then(|idx| {
+                                    text_section_bases.get(&idx).copied()
+                                });
+
+                            let resolved_target_offset = target_section_base
+                                .zip(addend_i64.checked_add(1))
+                                .and_then(|(section_base, slots)| {
+                                    let slots = u64::try_from(slots).ok()?;
+                                    let local = slots
+                                        .checked_mul(8)?
+                                        .checked_add(symbol.address())?;
+                                    section_base.checked_add(local)
+                                })
+                                .filter(|target| *target < text_size);
+
+                            let target_name = if let Some(target_offset) =
+                                resolved_target_offset
+                            {
+                                if let Some(existing_name) =
+                                    labels_by_offset.get(&target_offset)
+                                {
+                                    // Use known label
+                                    existing_name.clone()
+                                } else {
+                                    // If label is not known, create and use a synthetic label
+                                    let synthetic_name =
                                     synthetic_labels_by_offset
                                         .entry(target_offset)
                                         .or_insert_with(|| {
@@ -471,31 +495,37 @@ pub fn parse_bytecode(
                                             )
                                         })
                                         .clone();
-                                labels_by_offset.insert(
-                                    target_offset,
-                                    synthetic_name.clone(),
-                                );
-                                synthetic_name
-                            }
-                        } else {
-                            return Err(
+                                    labels_by_offset.insert(
+                                        target_offset,
+                                        synthetic_name.clone(),
+                                    );
+                                    synthetic_name
+                                }
+                            } else {
+                                return Err(
                                 SbpfLinkerError::UnresolvedSectionCallRelocation {
                                     section: section_name.clone(),
                                     abs_off: section_base + rel.0,
                                     addend: addend_i64,
                                 },
                             );
-                        };
+                            };
 
-                        node.imm = Some(Either::Left(target_name));
-                    } else {
-                        let name = symbol.name().unwrap_or("");
-                        assert!(
-                            !name.is_empty(),
-                            "non-STT_SECTION call target has empty name"
-                        );
-                        node.imm = Some(Either::Left(name.to_owned()));
+                            node.imm = Some(Either::Left(target_name));
+                        } else {
+                            let name = symbol.name().unwrap_or("");
+                            assert!(
+                                !name.is_empty(),
+                                "non-STT_SECTION call target has empty name"
+                            );
+                            node.imm = Some(Either::Left(name.to_owned()));
+                        }
                     }
+                    Ok(())
+                })();
+
+                if let Err(error) = result {
+                    errors.push(error);
                 }
             }
         } else if let Ok(section_name) = section.name()
@@ -580,25 +610,38 @@ pub fn parse_bytecode(
     for overlap in
         diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions)
     {
-        tracing::error!(
-            function = %overlap.function,
-            local_start = overlap.local_stack.start,
-            local_end = overlap.local_stack.end,
-            argument_start = overlap.incoming_args.start,
-            argument_end = overlap.incoming_args.end,
-            "local stack variable overlaps incoming spilled-argument region"
-        );
+        errors.push(SbpfLinkerError::StackArgOverlap {
+            function: overlap.function,
+            local_start: overlap.local_stack.start,
+            local_end: overlap.local_stack.end,
+            argument_start: overlap.incoming_args.start,
+            argument_end: overlap.incoming_args.end,
+        });
     }
 
-    rewrite_r11_stack_args(&mut ast, stack_frame_size)
-        .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })?;
+    if !errors.is_empty() {
+        return Err(errors);
+    }
 
-    let mut parse_result = build_program(ast, arch, optimization)
-        .map_err(|errors| SbpfLinkerError::BuildProgramError { errors })?;
+    let mut compile_errors =
+        rewrite_r11_stack_args(&mut ast, stack_frame_size)
+            .err()
+            .unwrap_or_default();
 
-    parse_result.debug_sections = debug_sections;
-
-    Ok(parse_result)
+    match build_program(ast, arch, optimization) {
+        Ok(mut parse_result) => {
+            if compile_errors.is_empty() {
+                parse_result.debug_sections = debug_sections;
+                Ok(parse_result)
+            } else {
+                Err(SbpfLinkerError::from_compile_errors(compile_errors))
+            }
+        }
+        Err(errors) => {
+            compile_errors.extend(errors);
+            Err(SbpfLinkerError::from_compile_errors(compile_errors))
+        }
+    }
 }
 
 fn resolve_rodata_label(

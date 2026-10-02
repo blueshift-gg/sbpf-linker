@@ -3,6 +3,7 @@ use aya_rustc_llvm_proxy as _;
 
 pub mod byteparser;
 pub mod fuse_args_stack;
+use std::collections::HashSet;
 use std::io;
 
 use bpf_linker::LinkerError;
@@ -23,6 +24,20 @@ pub enum SbpfLinkerError {
     LlvmDiagnosticError,
     #[error("Build Program Error. Error details: {errors:?}.")]
     BuildProgramError { errors: Vec<CompileError> },
+    #[error(
+        "Symbol {symbol} is missing. Export it with the `--export={symbol}` flag."
+    )]
+    MissingExportSymbol { symbol: String },
+    #[error(
+        "local stack variable overlaps incoming spilled-argument region in `{function}`: local [{local_start}, {local_end}) overlaps argument [{argument_start}, {argument_end})"
+    )]
+    StackArgOverlap {
+        function: String,
+        local_start: i32,
+        local_end: i32,
+        argument_start: i32,
+        argument_end: i32,
+    },
     #[error("Instruction Parse Error. Error detail: ({0}).")]
     InstructionParseError(String),
     #[error(
@@ -41,6 +56,37 @@ pub enum SbpfLinkerError {
         "Error handling rodata relocation in section={section} address={address:#x}: {detail}"
     )]
     RodataRelocationError { section: String, address: u64, detail: String },
+}
+
+impl SbpfLinkerError {
+    pub fn from_compile_errors(errors: Vec<CompileError>) -> Vec<Self> {
+        let mut linker_errors = Vec::new();
+
+        let mut undefined_labels = HashSet::new();
+        let mut other_errors = Vec::new();
+        for error in errors {
+            match &error {
+                CompileError::UndefinedLabel { label, .. } => {
+                    if undefined_labels.insert(label.clone()) {
+                        linker_errors.push(Self::MissingExportSymbol {
+                            symbol: label.clone(),
+                        });
+                    }
+                }
+                _ => other_errors.push(error),
+            }
+        }
+        if !other_errors.is_empty() {
+            linker_errors
+                .push(Self::BuildProgramError { errors: other_errors });
+        }
+
+        linker_errors
+    }
+
+    pub fn format_errors(errors: &[Self]) -> String {
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,7 +109,7 @@ impl ProgramOptions {
 pub fn link_program(
     source: &[u8],
     options: ProgramOptions,
-) -> Result<Vec<u8>, SbpfLinkerError> {
+) -> Result<Vec<u8>, Vec<SbpfLinkerError>> {
     let parse_result = parse_bytecode(source, options)?;
     let program = Program::from_parse_result(parse_result, None);
 
