@@ -28,6 +28,16 @@ pub enum SbpfLinkerError {
         "Symbol {symbol} is missing. Export it with the `--export={symbol}` flag."
     )]
     MissingExportSymbol { symbol: String },
+    #[error(
+        "local stack variable overlaps incoming spilled-argument region in `{function}`: local [{local_start}, {local_end}) overlaps argument [{argument_start}, {argument_end})"
+    )]
+    StackArgOverlap {
+        function: String,
+        local_start: i32,
+        local_end: i32,
+        argument_start: i32,
+        argument_end: i32,
+    },
     #[error("Instruction Parse Error. Error detail: ({0}).")]
     InstructionParseError(String),
     #[error(
