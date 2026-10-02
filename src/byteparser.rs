@@ -610,14 +610,13 @@ pub fn parse_bytecode(
     for overlap in
         diagnose_stack_arg_overlaps(&ast, stack_frame_size, &functions)
     {
-        tracing::error!(
-            function = %overlap.function,
-            local_start = overlap.local_stack.start,
-            local_end = overlap.local_stack.end,
-            argument_start = overlap.incoming_args.start,
-            argument_end = overlap.incoming_args.end,
-            "local stack variable overlaps incoming spilled-argument region"
-        );
+        errors.push(SbpfLinkerError::StackArgOverlap {
+            function: overlap.function,
+            local_start: overlap.local_stack.start,
+            local_end: overlap.local_stack.end,
+            argument_start: overlap.incoming_args.start,
+            argument_end: overlap.incoming_args.end,
+        });
     }
 
     if !errors.is_empty() {
