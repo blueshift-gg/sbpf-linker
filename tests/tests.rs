@@ -22,7 +22,9 @@ use sbpf_common::{
     instruction::{AsmFormat, Instruction},
     opcode::Opcode,
 };
-use sbpf_linker::{ProgramOptions, byteparser::parse_bytecode};
+use sbpf_linker::{
+    ProgramOptions, SbpfLinkerError, byteparser::parse_bytecode,
+};
 
 const NO_TESTS_FILTER: &str = "__no_tests_match_this_sbpf_arch__";
 
@@ -251,6 +253,19 @@ fn compile_test() {
             cfg.llvm_filecheck_preprocess = Some(SbpfV3::dump);
         }),
     );
+
+    run_mode::<SbpfV0, _>(
+        target,
+        "compile-fail",
+        &bpf_sysroot,
+        None::<fn(&mut compiletest_rs::Config)>,
+    );
+    run_mode::<SbpfV3, _>(
+        target,
+        "compile-fail",
+        &bpf_sysroot,
+        None::<fn(&mut compiletest_rs::Config)>,
+    );
 }
 
 // TODO: add below query methods to sbpf and update below to use them
@@ -264,7 +279,10 @@ fn render_emitted_program<A: TestArch>(path: &Path) -> anyhow::Result<String> {
             A::ARCH,
             DEFAULT_STACK_FRAME_SIZE,
         ),
-    )?;
+    )
+    .map_err(|errors| {
+        anyhow::anyhow!("{}", SbpfLinkerError::format_errors(&errors))
+    })?;
     let ph_count = if parse_result.prog_is_static { 1u64 } else { 3u64 };
     let rodata_base =
         parse_result.code_section.get_size() + 64 + ph_count * 56;
