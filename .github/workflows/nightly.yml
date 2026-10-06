@@ -117,13 +117,13 @@ jobs:
 
           echo "verifying pull request #$pr"
 
-          retries=15
+          deadline=$((SECONDS + 600))
           until [[ -n "$(gh pr checks "$pr" --json state --jq '.[].state' || true)" ]]; do
-            if (( --retries <= 0 )); then
+            if (( SECONDS >= deadline )); then
               echo "::error::no checks were started for pull request #$pr, so it is not verified and is left open for a maintainer."
               exit 1
             fi
-            sleep 2
+            sleep 20
           done
 
           if gh pr checks "$pr" --watch --fail-fast; then
