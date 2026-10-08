@@ -34,7 +34,7 @@ jobs:
           private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.MASTER_BRANCH }}
           fetch-depth: 0
@@ -77,6 +77,15 @@ jobs:
             echo "::error::$MASTER_BRANCH does not merge cleanly into $NEXT_BRANCH. Resolve it on $SYNC_BRANCH, then dispatch this workflow from $SYNC_BRANCH to continue."
             exit 1
           }
+
+          # Reapply the patch block if necessary
+          yq -oy -e '.patch."crates-io"' Cargo.toml >/dev/null || cat .github/sbpf-patch.toml >> Cargo.toml
+          if ! git diff --quiet; then
+            git add Cargo.toml
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -q --amend --no-edit
+          fi
 
           git push origin "HEAD:refs/heads/$SYNC_BRANCH"
 
@@ -139,7 +148,7 @@ jobs:
           private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.NEXT_BRANCH }}
           fetch-depth: 0
@@ -150,15 +159,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          if ! tip=$(git ls-remote --exit-code "$SBPF_REPOSITORY" refs/heads/master | cut -f1); then
-            echo "::error::could not resolve sbpf master"
-            exit 1
-          fi
-
-          # Find the dependencies that track sbpf master in Cargo.toml and put them space-separated in `pkgs`
-          read -ra pkgs <<< "$(yq -r '(.dependencies // {}) + (.workspace.dependencies // {}) | to_entries | map(select(.value.git == strenv(SBPF_REPOSITORY) and .value.branch == "master") | .key) | join(" ")' Cargo.toml)"
-          [[ ${#pkgs[@]} -gt 0 ]] || { echo "::notice::no dependency tracks $SBPF_REPOSITORY master; nothing to track."; exit 0; }
 
           # Build on the pull request's branch when it is available, so a change made
           # there survives and the commit this run makes still descends from it.
@@ -178,29 +178,53 @@ jobs:
             }
           fi
 
-          # The sbpf revs tracked in Cargo.lock, read after the branch is checked out so
-          # that it reports the branch's own pin
-          pinned=$(NAMES="${pkgs[*]}" yq -p toml -o y -r '[.package[] | select(.name as $n | (strenv(NAMES) | split(" ")) | contains([$n])) | .source] | unique | join(", ")' Cargo.lock)
+          locked_sbpf_rev() {
+            yq -p toml -oy -r \
+              '.package[] | select(.name == "sbpf-assembler") | .source | split("#") | .[1] // ""' Cargo.lock | head -n1
+          }
 
-          echo "moving ${pkgs[*]} from ${pinned:-none} to $tip"
-          cargo update "${pkgs[@]/#/-p}" --precise "$tip"
+          old=$(locked_sbpf_rev)
+          # Move the sbpf packages onto the git source. This job carries no cargo cache, so
+          # the fetch resolves master as it is now; a cache would pin a stale revision.
+          cargo update -p sbpf-assembler -p sbpf-common
 
-          if [[ "${pinned##*#}" == "$tip" ]]; then
-            echo "::notice::already tracking sbpf master at $tip."
+          sbpf_rev=$(locked_sbpf_rev)
+          [[ -n "$sbpf_rev" ]] \
+            || { echo "::error::the sbpf dependencies are not on a git source after the update"; exit 1; }
+
+          # Second pass: leave the lock settled, holding the revision
+          cargo update -p sbpf-assembler -p sbpf-common --precise "$sbpf_rev"
+
+          {
+            echo "old=$old"
+            echo "rev=$sbpf_rev"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit the bump
+        id: commit
+        shell: bash
+        env:
+          REV: ${{ steps.bump.outputs.rev }}
+        run: |
+          set -euo pipefail
+
+          if git diff --quiet; then
+            echo "::notice::already tracking sbpf master; nothing to commit."
             exit 0
           fi
 
-          git add Cargo.lock
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "chore: track sbpf master at ${tip:0:12}"
-          echo "pinned=${pinned##*#}" >> "$GITHUB_OUTPUT"
-          echo "rev=$tip" >> "$GITHUB_OUTPUT"
+          git add Cargo.toml Cargo.lock
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "chore: track sbpf master at ${REV:0:12}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Push the bump and open the pull request
-        if: steps.bump.outputs.rev != ''
+        if: steps.commit.outputs.changed == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
-          PINNED: ${{ steps.bump.outputs.pinned }}
+          OLD: ${{ steps.bump.outputs.old }}
           REV: ${{ steps.bump.outputs.rev }}
         run: |
           set -euo pipefail
@@ -208,11 +232,16 @@ jobs:
           git push origin "HEAD:refs/heads/$PIN_BRANCH"
 
           title="chore: track sbpf master at ${REV:0:12}"
-          body=$(printf '%s\n' \
-            "Moves the sbpf pin in \`Cargo.lock\` from \`${PINNED:0:12}\` to \`${REV:0:12}\`." \
-            "" \
-            "Upstream diff: https://github.com/blueshift-gg/sbpf/compare/${PINNED}...${REV}" \
-            "" \
+
+          if [[ -n "$OLD" ]]; then
+            moved="Moves the sbpf pin in \`Cargo.lock\` from \`${OLD:0:12}\` to \`${REV:0:12}\`."
+            upstream="Upstream diff: ${SBPF_REPOSITORY%.git}/compare/${OLD}...${REV}"
+          else
+            moved="Moves the sbpf pin in \`Cargo.lock\` to \`${REV:0:12}\`."
+            upstream="Upstream: ${SBPF_REPOSITORY%.git}/commit/${REV}"
+          fi
+
+          body=$(printf '%s\n' "$moved" "" "$upstream" "" \
             "Merge this with a merge commit; DO NOT squash or rebase \`${NEXT_BRANCH}\`.")
 
           # Reuse the pull request an earlier run left open, rather than failing

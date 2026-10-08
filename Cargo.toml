@@ -68,3 +68,6 @@ rust-llvm = [
     "bpf-linker/llvm-23",
     "bpf-linker/no-llvm-linking",
 ]
+[patch.crates-io]
+sbpf-assembler = { git = "https://github.com/blueshift-gg/sbpf.git", branch = "master" }
+sbpf-common = { git = "https://github.com/blueshift-gg/sbpf.git", branch = "master" }
