@@ -183,6 +183,15 @@ fn find_solana_compiler_builtins_rlib(
         }
     }
     let latest = latest.map(|(_, path)| path);
+    if latest.is_none() {
+        eprintln!(
+            "warning: `solana-compiler-builtins` was not linked. Code generation \
+             may fail for operations that require libcalls, and some operations \
+             may run less efficiently on the SVM. To fix this, run \
+             `cargo add solana-compiler-builtins`, then add \
+             `use solana_compiler_builtins as _;` to `src/lib.rs`."
+        );
+    }
     Ok(latest)
 }
 
