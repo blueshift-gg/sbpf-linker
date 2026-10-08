@@ -183,6 +183,15 @@ fn find_solana_compiler_builtins_rlib(
         }
     }
     let latest = latest.map(|(_, path)| path);
+    if latest.is_none() {
+        eprintln!(
+            "warning: `solana-compiler-builtins` was not linked. Code generation \
+             may fail for operations that require libcalls, and some operations \
+             may run less efficiently on the SVM. To fix this, run \
+             `cargo add solana-compiler-builtins`, then add \
+             `use solana_compiler_builtins as _;` to `src/lib.rs`."
+        );
+    }
     Ok(latest)
 }
 
@@ -272,7 +281,7 @@ struct CommandLine {
     sbpf_optimize: bool,
 
     /// sBPF target architecture. Can be one of `v0`, `v3`
-    #[clap(long, default_value = "v3")]
+    #[clap(long, default_value = "v3", hide = true)]
     arch: CliArch,
 
     /// Extra command line arguments to pass to LLVM
@@ -737,5 +746,23 @@ mod tests {
                 "sBPF architecture `v0` only supports CPU architectures"
             ));
         }
+    }
+
+    #[test]
+    fn test_arch_is_hidden_but_still_accepted() {
+        let help = CommandLine::try_parse_from(["sbpf-linker", "--help"])
+            .unwrap_err()
+            .to_string();
+        assert!(!help.contains("--arch"));
+
+        let cli = CommandLine::try_parse_from([
+            "sbpf-linker",
+            "input.o",
+            "-o",
+            "/tmp/bin.o",
+            "--arch=v0",
+        ])
+        .unwrap();
+        assert!(matches!(cli.arch.0, SbpfArch::V0));
     }
 }
