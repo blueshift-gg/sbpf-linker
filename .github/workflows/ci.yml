@@ -195,3 +195,26 @@ jobs:
           use_oidc: true
           files: lcov.info
           fail_ci_if_error: false
+
+  sbpf-source:
+    name: Ensure sbpf dependency is overridden only on sbpf-linker-next branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the sbpf source
+        env:
+          BRANCH: ${{ github.base_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          has_patch="absent"
+          yq -oy -e '.patch."crates-io"' Cargo.toml >/dev/null 2>&1 && has_patch="present"
+
+          case "$BRANCH" in
+            sbpf-linker-next) [[ "$has_patch" == "present" ]] || { echo "::error::sbpf-linker-next must carry the sbpf [patch.crates-io] block"; exit 1; } ;;
+            master)           [[ "$has_patch" == "absent" ]]  || { echo "::error::master must not carry the sbpf [patch.crates-io] block"; exit 1; } ;;
+            *)                echo "::notice::not master or sbpf-linker-next ($BRANCH); nothing to check"; exit 0 ;;
+          esac
+
+          echo "sbpf source is correct for $BRANCH"

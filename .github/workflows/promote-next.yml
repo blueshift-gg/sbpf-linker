@@ -1,0 +1,211 @@
+name: Promote next to release
+
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('Promote next to release v{0}', inputs.version)
+      || format('Tag {0}', github.event.pull_request.head.ref) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: sbpf-linker version to release, without the v (e.g. 0.2.3).
+        required: true
+        type: string
+      sbpf_version:
+        description: sbpf version the release depends on (0.3.1); empty for the newest compatible.
+        required: false
+        type: string
+  pull_request:
+    types: [closed]
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  NEXT_BRANCH: sbpf-linker-next
+
+jobs:
+  prepare:
+    name: Prepare the release pull request
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: promote-next
+      cancel-in-progress: false
+    steps:
+      - name: Create the app token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.NEXT_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate the release
+        id: validate
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          read -r version <<< "$VERSION"
+          branch="release/sbpf-linker-$version"
+          tag="v$version"
+
+          remote=$(git ls-remote --tags origin "refs/tags/$tag") \
+            || { echo "::error::could not query the remote for $tag"; exit 1; }
+          [[ -z "$remote" ]] || { echo "::error::tag $tag already exists"; exit 1; }
+
+          heads=$(gh pr list --state open --base master --json headRefName --jq '.[].headRefName') \
+            || { echo "::error::could not list the open pull requests"; exit 1; }
+
+          # A re-dispatch of the same version reuses its branch and pull request.
+          others=$(printf '%s\n' "$heads" | grep -vxF "$branch" | grep '^release/' || true)
+          [[ -z "$others" ]] \
+            || { echo "::error::another release pull request ($others) is open; close it first"; exit 1; }
+
+          git merge-base --is-ancestor origin/master "origin/$NEXT_BRANCH" \
+            || { echo "::error::master has commits $NEXT_BRANCH does not; sync $NEXT_BRANCH before cutting a release"; exit 1; }
+
+          {
+            echo "branch=$branch"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Install the manifest editor
+        run: python3 -m pip install --quiet --require-hashes --no-deps -r .github/scripts/requirements.txt
+
+      - name: Cut the release branch
+        env:
+          VERSION: ${{ steps.validate.outputs.version }}
+          SBPF_VERSION: ${{ inputs.sbpf_version }}
+          BRANCH: ${{ steps.validate.outputs.branch }}
+        run: |
+          set -euo pipefail
+
+          git switch -c "$BRANCH"
+
+          python3 .github/scripts/cut-release.py "$VERSION"
+
+          cargo update -p sbpf-assembler -p sbpf-common
+
+          # Use supplied sbpf version, if given; the packages are registry-sourced by now,
+          # so --precise takes a version here rather than a revision.
+          if [[ -n "$SBPF_VERSION" ]]; then
+            cargo update -p sbpf-assembler -p sbpf-common --precise "$SBPF_VERSION"
+          fi
+
+      - name: Push and open the pull request
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          BRANCH: ${{ steps.validate.outputs.branch }}
+          TAG: ${{ steps.validate.outputs.tag }}
+          VERSION: ${{ steps.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          sbpf=$(yq -p toml -oy -r \
+            '.package[] | select(.name == "sbpf-assembler") | .version' Cargo.lock | head -n1)
+
+          body=$(cat <<EOF
+          sbpf-linker  $VERSION
+          sbpf deps    sbpf master -> $sbpf (published)
+          tag          $TAG
+
+          Merge this with a merge commit; do not squash or rebase, so that
+          $NEXT_BRANCH stays a superset of master.
+          EOF
+          )
+
+          printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
+
+          git add Cargo.toml Cargo.lock
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "release: sbpf-linker $VERSION"
+
+          gh auth setup-git
+          previous=$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)
+          git push --force-with-lease="refs/heads/$BRANCH:$previous" origin "HEAD:refs/heads/$BRANCH"
+
+          title="release: sbpf-linker $VERSION"
+          existing=$(gh pr list --state open --base master --head "$BRANCH" \
+            --json number --jq '.[0].number // empty')
+          if [[ -n "$existing" ]]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+          else
+            gh pr create --base master --head "$BRANCH" --title "$title" --body "$body"
+          fi
+
+  tag:
+    name: Tag the release
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.merged == true
+      && startsWith(github.event.pull_request.head.ref, 'release/')
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Create the app token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.SYNC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+      - name: Checkout the merged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Tag the release
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin master "$NEXT_BRANCH"
+          git merge-base --is-ancestor "origin/$NEXT_BRANCH" HEAD \
+            || { echo "::error::$NEXT_BRANCH is not an ancestor of the merge commit, so it was squashed or rebased"; exit 1; }
+
+          version=$(yq -e '.package.version' Cargo.toml)
+          tag="v$version"
+
+          remote=$(git ls-remote --tags origin "refs/tags/$tag") \
+            || { echo "::error::could not query the remote for $tag"; exit 1; }
+          if [[ -n "$remote" ]]; then
+            echo "::notice::$tag already exists; leaving it untouched"
+          else
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                tag -a "$tag" -m "Release $tag"
+            git push origin "$tag" || {
+              echo "::error::could not push $tag. If it already exists on the remote, re-run this job: it will skip the tag and continue with the re-track."
+              exit 1
+            }
+          fi
+
+      - name: Put sbpf-linker-next back on sbpf master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run sync-next.yml --ref master
