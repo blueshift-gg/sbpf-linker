@@ -1,7 +1,7 @@
 [package]
 name = "sbpf-linker"
 edition = "2024"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Claire Fan <claire@blueshift.gg>"]
 description = "Upstream BPF linker for SBPF V0/V3 programs"
 license = "MIT"
@@ -68,3 +68,4 @@ rust-llvm = [
     "bpf-linker/llvm-23",
     "bpf-linker/no-llvm-linking",
 ]
+

@@ -341,7 +341,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -377,7 +377,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -679,7 +679,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -990,7 +990,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1019,9 +1019,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-analyze"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01ca98374d7bccd3c65043868828695a68b10d8a599a78590d00adbede260b27"
+checksum = "8dba29785d046687ceba5b8afd57a6cbbe81ab62f01aec630284ea3a9450bad0"
 dependencies = [
  "sbpf-common",
  "sbpf-ir",
@@ -1030,9 +1030,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-assembler"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed713a0bfe6a909614a381ea36e827e8c450420d3fe05162c11d276e3d0c63dc"
+checksum = "2d2a2cb0f6cff0f1fd363235f3ca81990bf47661dec74234adce44c59db2fed0"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1055,9 +1055,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b09569e3a66bb359bdf6f8fb62abf7f42ffe99466e0fb2306b4a40b8aa3cde9"
+checksum = "1671b05631054f5de21e31cc4a00d3bc9cd3095dfa812e22aa6d206a65b5d367"
 dependencies = [
  "either",
  "num-derive",
@@ -1071,9 +1071,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common-derive"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bad31501c01df7e2a71e22ade5fa1dbafc2e079daede75e3f254c4e47f25971"
+checksum = "c736a7ac47b00f360e824416075ae4719eec2a1b8ac8ee2968a11863cb47d3e1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1083,9 +1083,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common-tablegen"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ecdf6ce1164a689d7ca9a1bd7def73af0387146b84c1b1bb89835f27358b344"
+checksum = "41ad76723d8018a6dd6692345c30f02281f45b6ceeb6d4ef1355da3bcbe78aed"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1094,9 +1094,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-ir"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b58389fd8ec1b266af5e8b8f35be4f66d054b1be3e71e8b3c583f386b3793a0f"
+checksum = "f6c177e63ed67366c2d9bd638262ff0763ad090e002e577851073d8b850ed049"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "sbpf-linker"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "aya-rustc-llvm-proxy",
@@ -1129,9 +1129,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-syscall-map"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7721fdf61d263c8013703dbea3d6d6c80d0226380e8a25311c4a2517085a5e7"
+checksum = "6405494ab2e7047f2b06b9ba321928cb1c0af32740e79bb43e5bd54cd67495a0"
 
 [[package]]
 name = "scopeguard"
@@ -1284,7 +1284,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1655,7 +1655,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
