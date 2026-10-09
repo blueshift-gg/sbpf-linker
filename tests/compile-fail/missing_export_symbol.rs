@@ -1,8 +1,8 @@
 // assembly-output: ptx-linker
-// compile-flags: --crate-type bin -C opt-level=3 -C panic=abort
+// compile-flags: --crate-type bin -C opt-level=3 -C panic=abort -C link-arg=--disable-math-builtins
 
-// The program uses `__adddf3` and `__multi3` compiler builtins but since
-// these symbols are not exported, the linker should fail with an error.
+// The program uses `__adddf3` and `__multi3` compiler builtins. Disabling the
+// default math builtin exports should make the linker fail with an error.
 
 #![no_std]
 #![no_main]
