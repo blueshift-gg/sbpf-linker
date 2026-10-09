@@ -1,7 +1,7 @@
 [package]
 name = "sbpf-linker"
 edition = "2024"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Claire Fan <claire@blueshift.gg>"]
 description = "Upstream BPF linker for SBPF V0/V3 programs"
 license = "MIT"
@@ -69,6 +69,3 @@ rust-llvm = [
     "bpf-linker/no-llvm-linking",
 ]
 
-[patch.crates-io]
-sbpf-assembler = { git = "https://github.com/blueshift-gg/sbpf.git", branch = "master" }
-sbpf-common = { git = "https://github.com/blueshift-gg/sbpf.git", branch = "master" }
