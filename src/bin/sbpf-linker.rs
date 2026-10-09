@@ -24,6 +24,19 @@ use sbpf_linker::{
     link_program,
 };
 
+const MATH_BUILTINS: [&str; 10] = [
+    "__multi3",
+    "__adddf3",
+    "__subdf3",
+    "__negdf2",
+    "__muldf3",
+    "__divdf3",
+    "__floatundidf",
+    "__fixunsdfdi",
+    "__gedf2",
+    "__gtdf2",
+];
+
 #[derive(Debug, Error)]
 enum CliError {
     #[error(
@@ -295,8 +308,12 @@ struct CommandLine {
     /// Disable exporting memcpy, memmove, memset, memcmp and bcmp. Exporting
     /// those is commonly needed when LLVM does not manage to expand memory
     /// intrinsics to a sequence of loads and stores.
-    #[clap(long)]
+    #[clap(long, hide = true)]
     disable_memory_builtins: bool,
+
+    /// Disable exporting compiler-provided math builtins.
+    #[clap(long, hide = true)]
+    disable_math_builtins: bool,
 
     /// Input files. Can be object files or static libraries
     #[clap(required = true)]
@@ -405,6 +422,7 @@ fn main() -> anyhow::Result<()> {
         arch,
         disable_expand_memcpy_in_order,
         disable_memory_builtins,
+        disable_math_builtins,
         mut inputs,
         export,
         fatal_errors,
@@ -443,12 +461,14 @@ fn main() -> anyhow::Result<()> {
     info!("command line: {:?}", env::args().collect::<Vec<_>>().join(" "));
 
     let export_symbols = export_symbols.map(fs::read_to_string).transpose()?;
-
+    let math_builtins =
+        if disable_math_builtins { &[][..] } else { &MATH_BUILTINS[..] };
     let export_symbols = export_symbols
         .as_deref()
         .into_iter()
         .flat_map(str::lines)
-        .chain(export.iter().map(String::as_str));
+        .chain(export.iter().map(String::as_str))
+        .chain(math_builtins.iter().copied());
 
     let output_type = match *cli.emit.as_slice() {
         [] => unreachable!("emit has a default value"),
@@ -635,12 +655,14 @@ mod tests {
         .map(|s| s.to_string());
         let CommandLine {
             disable_expand_memcpy_in_order,
+            disable_math_builtins,
             deploy,
             sbpf_optimize,
             arch,
             ..
         } = process_cli_options(args).unwrap();
         assert!(disable_expand_memcpy_in_order);
+        assert!(!disable_math_builtins);
         assert!(deploy);
         assert!(sbpf_optimize);
         assert!(matches!(arch.0, SbpfArch::V3));
@@ -693,6 +715,7 @@ mod tests {
             "--unroll-loops",
             "--ignore-inline-never",
             "--disable-memory-builtins",
+            "--disable-math-builtins",
             "--log-level=debug",
             "--export-symbols=/tmp/exports.txt",
             "--dump-module=/tmp/module.ll",
@@ -706,6 +729,7 @@ mod tests {
             unroll_loops,
             ignore_inline_never,
             disable_memory_builtins,
+            disable_math_builtins,
             log_level,
             export_symbols,
             dump_module,
@@ -722,6 +746,7 @@ mod tests {
         assert!(unroll_loops);
         assert!(ignore_inline_never);
         assert!(disable_memory_builtins);
+        assert!(disable_math_builtins);
         assert_eq!(log_level, Some(Level::DEBUG));
         assert_eq!(export_symbols, Some(PathBuf::from("/tmp/exports.txt")));
         assert_eq!(dump_module, Some(PathBuf::from("/tmp/module.ll")));
@@ -749,11 +774,13 @@ mod tests {
     }
 
     #[test]
-    fn test_arch_is_hidden_but_still_accepted() {
+    fn test_hidden_flags_are_still_accepted() {
         let help = CommandLine::try_parse_from(["sbpf-linker", "--help"])
             .unwrap_err()
             .to_string();
         assert!(!help.contains("--arch"));
+        assert!(!help.contains("--disable-memory-builtins"));
+        assert!(!help.contains("--disable-math-builtins"));
 
         let cli = CommandLine::try_parse_from([
             "sbpf-linker",
