@@ -1,11 +1,10 @@
 [package]
 name = "sbpf-linker"
 edition = "2024"
-version = "0.2.3"
+version = "0.2.4"
 authors = ["Claire Fan <claire@blueshift.gg>"]
 description = "Upstream BPF linker for SBPF V0/V3 programs"
 license = "MIT"
-homepage = "https://github.com/blueshift-gg/sbpf-linker"
 repository = "https://github.com/blueshift-gg/sbpf-linker"
 keywords = ["cli", "sbpf", "linker", "solana"]
 categories = ["command-line-utilities"]
