@@ -72,7 +72,7 @@ jobs:
 
       - name: Restore pinned LLVM
         env:
-          LLVM_COMMIT: 21cf28432798952d942bacc6bcee3a328faa3638
+          LLVM_COMMIT: aab11ee0ea5ea9a1d462ad0bc1fae9d9bb643019
           LLVM_BUILD_REV: "4"
         run: |
           set -euo pipefail
