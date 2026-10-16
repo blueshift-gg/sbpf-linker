@@ -3,8 +3,12 @@ name: Release
 run-name: "Release ${{ github.ref_name }}"
 
 on:
+  # Build and upload binaries.
   push:
     tags: ["v*"]
+  # Dry run: build binaries, but without uploading them.
+  pull_request:
+    branches: [master, sbpf-linker-next]
 
 jobs:
   prepare:
@@ -19,6 +23,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve and verify version
+        if: github.event_name == 'push'
         id: version
         run: |
           set -euo pipefail
@@ -44,6 +49,8 @@ jobs:
             target: x86_64-unknown-linux-musl
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+          - runner: ubuntu-24.04
+            target: riscv64gc-unknown-linux-musl
           - runner: macos-15-intel
             target: x86_64-apple-darwin
           - runner: macos-15
@@ -67,7 +74,7 @@ jobs:
 
       - name: Restore pinned LLVM
         env:
-          LLVM_COMMIT: 21cf28432798952d942bacc6bcee3a328faa3638
+          LLVM_COMMIT: aab11ee0ea5ea9a1d462ad0bc1fae9d9bb643019
           LLVM_BUILD_REV: "4"
         run: |
           set -euo pipefail
@@ -108,6 +115,7 @@ jobs:
             -C "$(dirname "$binary")" "$(basename "$binary")"
 
       - name: Upload binary artifact
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           path: dist/sbpf-linker-${{ matrix.target }}.tar.gz
@@ -117,6 +125,7 @@ jobs:
 
   crates:
     name: Publish crates
+    if: github.event_name == 'push'
     needs: binaries
     runs-on: ubuntu-latest
     concurrency:
@@ -155,6 +164,7 @@ jobs:
 
   release:
     name: Prepare GitHub release
+    if: github.event_name == 'push'
     needs:
       - prepare
       - crates
