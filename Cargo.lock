@@ -1020,8 +1020,9 @@ dependencies = [
 [[package]]
 name = "sbpf-analyze"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 dependencies = [
+ "either",
  "sbpf-common",
  "sbpf-ir",
  "smallvec",
@@ -1030,7 +1031,7 @@ dependencies = [
 [[package]]
 name = "sbpf-assembler"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1054,7 +1055,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 dependencies = [
  "either",
  "num-derive",
@@ -1069,7 +1070,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common-derive"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1080,7 +1081,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common-tablegen"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1090,7 +1091,7 @@ dependencies = [
 [[package]]
 name = "sbpf-ir"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1123,7 +1124,7 @@ dependencies = [
 [[package]]
 name = "sbpf-syscall-map"
 version = "0.3.2"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#d726c642932c15a176e6e00bb4a3bf71e98feef2"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#7e173d8d9d913263b555ce96ec64174632ab229b"
 
 [[package]]
 name = "scopeguard"
