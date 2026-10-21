@@ -20,6 +20,9 @@ use crate::fuse_args_stack::{
     FunctionRange, diagnose_stack_arg_overlaps, rewrite_r11_stack_args,
 };
 
+const BPF_TRAP: &str = "__bpf_trap";
+const ABORT_SYSCALL: &str = "abort";
+
 fn decode_instruction_for_arch(
     data: &[u8],
     arch: SbpfArch,
@@ -518,6 +521,16 @@ pub fn parse_bytecode(
                                 !name.is_empty(),
                                 "non-STT_SECTION call target has empty name"
                             );
+                            // LLVM lowers `llvm.trap` to a call to the
+                            // kernel kfunc `__bpf_trap`, which SBPF does not
+                            // provide. Unless the program defines the symbol
+                            // itself, bind it to the `abort` syscall.
+                            let name =
+                                if name == BPF_TRAP && symbol.is_undefined() {
+                                    ABORT_SYSCALL
+                                } else {
+                                    name
+                                };
                             node.imm = Some(Either::Left(name.to_owned()));
                         }
                     }
