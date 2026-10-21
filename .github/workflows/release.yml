@@ -44,6 +44,8 @@ jobs:
             target: x86_64-unknown-linux-musl
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+          - runner: ubuntu-24.04
+            target: riscv64gc-unknown-linux-musl
           - runner: macos-15-intel
             target: x86_64-apple-darwin
           - runner: macos-15
@@ -62,12 +64,18 @@ jobs:
           cache: false
           rustflags: ""
 
+      - name: Install cross-compilation tools
+        if: matrix.target == 'riscv64gc-unknown-linux-musl'
+        uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8 # v1.42.0
+        with:
+          target: ${{ matrix.target }}
+
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
 
       - name: Restore pinned LLVM
         env:
-          LLVM_COMMIT: 21cf28432798952d942bacc6bcee3a328faa3638
+          LLVM_COMMIT: aab11ee0ea5ea9a1d462ad0bc1fae9d9bb643019
           LLVM_BUILD_REV: "4"
         run: |
           set -euo pipefail

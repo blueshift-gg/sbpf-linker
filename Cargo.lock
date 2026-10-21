@@ -110,9 +110,9 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "bpf-linker"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61345fbf1de66aa477e7df1d920175ab807ca52bebd00a04b6171c14aff9e4ca"
+checksum = "32f9491aed7bfb98ef9c9bd3dab264e0455dffb55cff64ada831146e7f28f15e"
 dependencies = [
  "anyhow",
  "ar",
