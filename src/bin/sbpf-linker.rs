@@ -24,8 +24,10 @@ use sbpf_linker::{
     link_program,
 };
 
-const MATH_BUILTINS: [&str; 10] = [
+const MATH_BUILTINS: [&str; 12] = [
     "__multi3",
+    "__udivti3",
+    "__umodti3",
     "__adddf3",
     "__subdf3",
     "__negdf2",
