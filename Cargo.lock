@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "sbpf-linker"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "aya-rustc-llvm-proxy",
