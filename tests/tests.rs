@@ -96,7 +96,7 @@ where
         SbpfArch::V3 => "v4",
     };
     let target_rustcflags = format!(
-        "-C linker={} -C target-cpu={} -C target-feature=+allows-misaligned-mem-access -C link-arg=--arch={} -C link-arg=--llvm-args=--bpf-stack-size=4096 --sysroot {}",
+        "-C linker={} -C target-cpu={} -C target-feature=+allows-misaligned-mem-access -C link-arg=--arch={} -C link-arg=--llvm-args=--bpf-stack-size=4096 -C link-arg=--llvm-args=--disable-movsx -C link-arg=--llvm-args=--disable-ldsx --sysroot {}",
         env!("CARGO_BIN_EXE_sbpf-linker"),
         cpu,
         arch_arg,
