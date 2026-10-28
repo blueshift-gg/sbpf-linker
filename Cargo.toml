@@ -67,3 +67,7 @@ rust-llvm = [
     "bpf-linker/no-llvm-linking",
 ]
 
+# aya-rs/bpf-linker#489 selects static relocation internally. Replace this
+# pinned patch with a released dependency version once it is published.
+[patch.crates-io]
+bpf-linker = { git = "https://github.com/aya-rs/bpf-linker", rev = "f4a30595b407a9f7dbc1dfa38c4cbdd37a0d9f90" }
