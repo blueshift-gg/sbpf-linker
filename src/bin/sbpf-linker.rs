@@ -63,8 +63,6 @@ enum CliError {
     InvalidStackFrameSize(String),
     #[error("missing required `--bpf-stack-size=<value>` LLVM argument")]
     MissingStackFrameSize,
-    #[error("SBPF Linker Error. Error detail: ({0}).")]
-    SbpfLinkerError(#[from] SbpfLinkerError),
     #[error("Program Write Error. Error detail: ({msg}).")]
     ProgramWriteError { msg: String },
 }
@@ -122,16 +120,12 @@ impl FromStr for CliArch {
 
 fn parent_and_file_name(p: PathBuf) -> anyhow::Result<(PathBuf, PathBuf)> {
     let mut comps = p.components();
-    let file_name = comps
-        .next_back()
-        .map(|p| match p {
-            Component::Normal(p) => Ok(p),
-            p => Err(anyhow::anyhow!("unexpected path component {:?}", p)),
-        })
-        .transpose()?
-        .ok_or_else(|| anyhow::anyhow!("unexpected empty path"))?;
-    let parent = comps.as_path();
-    Ok((parent.to_path_buf(), Path::new(file_name).to_path_buf()))
+    let file_name = match comps.next_back() {
+        Some(Component::Normal(p)) => p,
+        Some(p) => anyhow::bail!("unexpected path component {p:?}"),
+        None => anyhow::bail!("unexpected empty path"),
+    };
+    Ok((comps.as_path().to_path_buf(), PathBuf::from(file_name)))
 }
 
 /// Warns when inputs doesn't include `solana-compiler-builtins` which might come from
@@ -429,29 +423,22 @@ fn main() -> anyhow::Result<()> {
         [.., CliOptLevel(optimize)] => optimize,
     };
 
-    let stack_frame_size_arg: for<'a> fn(&'a CStr) -> Option<&'a str> = |arg| {
-        const FLAG: &str = "bpf-stack-size";
-
+    fn stack_frame_size_arg(arg: &CStr) -> Option<&str> {
         let arg = arg.to_str().ok()?;
         let arg = arg.strip_prefix("--").or_else(|| arg.strip_prefix('-'))?;
-        let rest = arg.strip_prefix(FLAG)?;
-
-        rest.strip_prefix('=')
-    };
-    let stack_frame_size_from_llvm_args =
-        |llvm_args: &[CString]| -> Result<i32, CliError> {
-            let arg = llvm_args
-                .iter()
-                .rev()
-                .find_map(|arg| stack_frame_size_arg(arg))
-                .ok_or(CliError::MissingStackFrameSize)?;
-
-            arg.parse::<i32>().ok().filter(|size| *size > 0).ok_or_else(|| {
-                CliError::InvalidStackFrameSize(arg.to_string())
-            })
-        };
-
-    let stack_frame_size_result = stack_frame_size_from_llvm_args(&llvm_args);
+        arg.strip_prefix("bpf-stack-size=")
+    }
+    let stack_frame_size_result = llvm_args
+        .iter()
+        .rev()
+        .find_map(|arg| stack_frame_size_arg(arg))
+        .ok_or(CliError::MissingStackFrameSize)
+        .and_then(|arg| {
+            arg.parse::<i32>()
+                .ok()
+                .filter(|size| *size > 0)
+                .ok_or_else(|| CliError::InvalidStackFrameSize(arg.to_owned()))
+        });
 
     let mut linker = Linker::new(LinkerOptions {
         target,
@@ -485,7 +472,7 @@ fn main() -> anyhow::Result<()> {
         ));
     }
 
-    let program = std::fs::read(&output).unwrap();
+    let program = fs::read(&output)?;
     let sbpf_optimization = if sbpf_optimize {
         match dump_cfg_dir {
             Some(dir) => OptimizationConfig::enabled().with_cfg_dump_dir(dir),
@@ -502,29 +489,27 @@ fn main() -> anyhow::Result<()> {
         anyhow::anyhow!("{}", SbpfLinkerError::format_errors(&errors))
     })?;
 
-    let src_name = std::path::Path::new(&output)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("main");
+    let src_name =
+        output.file_stem().and_then(|s| s.to_str()).unwrap_or("main");
 
-    let output_path = std::path::Path::new(&output)
+    let output_path = output
         .parent()
-        .unwrap_or_else(|| std::path::Path::new("."))
+        .unwrap_or_else(|| Path::new("."))
         .join(format!("{src_name}.so"));
-    std::fs::write(&output_path, &bytecode)
+    fs::write(&output_path, &bytecode)
         .map_err(|e| CliError::ProgramWriteError { msg: e.to_string() })?;
 
     // Remove "lib" from the artifact and put it in target/deploy
     if deploy {
         let final_object = src_name.strip_prefix("lib").unwrap_or(src_name);
         let deploy_path = PathBuf::from("target").join("deploy");
-        std::fs::create_dir_all(&deploy_path).map_err(|e| {
+        fs::create_dir_all(&deploy_path).map_err(|e| {
             CliError::ProgramWriteError {
                 msg: format!("failed to create deploy directory: {e}"),
             }
         })?;
         let deploy_file = deploy_path.join(format!("{final_object}.so"));
-        std::fs::write(&deploy_file, &bytecode).map_err(|e| {
+        fs::write(&deploy_file, &bytecode).map_err(|e| {
             CliError::ProgramWriteError {
                 msg: format!("failed to write deploy artifact: {e}"),
             }

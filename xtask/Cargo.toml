@@ -7,4 +7,3 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 dirs = "6"
-walkdir.workspace = true

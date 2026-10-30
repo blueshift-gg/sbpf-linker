@@ -60,22 +60,20 @@ pub fn parse_bytecode(
     // Track all read-only sections including .rodata* and .data.rel.ro* sections.
     // .data.rel.ro* is read-only after load-time pointer patching and can be
     // an lddw relocation target just like .rodata*.
-    let mut ro_sections = HashMap::new();
-    for section in obj.sections().filter(|section| {
-        section
-            .name()
-            .map(|name| {
+    let ro_sections: HashMap<_, _> = obj
+        .sections()
+        .filter(|section| {
+            section.name().is_ok_and(|name| {
                 name.starts_with(".rodata") || name.starts_with(".data.rel.ro")
             })
-            .unwrap_or(false)
-    }) {
-        ro_sections.insert(section.index(), section);
-    }
+        })
+        .map(|section| (section.index(), section))
+        .collect();
 
     let mut text_section_bases = HashMap::new();
     let mut text_size = 0u64;
     for section in obj.sections().filter(|section| {
-        section.name().map(|name| name.starts_with(".text")).unwrap_or(false)
+        section.name().is_ok_and(|name| name.starts_with(".text"))
     }) {
         text_section_bases.insert(section.index(), text_size);
         text_size += section.size();
@@ -98,11 +96,11 @@ pub fn parse_bytecode(
                 "non-STT_SECTION rodata symbol has size 0"
             );
 
+            let data = ro_section.data().unwrap();
             let bytes: Vec<Number> = (0..symbol.size())
                 .map(|i| {
                     Number::Int(i64::from(
-                        ro_section.data().unwrap()
-                            [(symbol.address() + i) as usize],
+                        data[(symbol.address() + i) as usize],
                     ))
                 })
                 .collect();
@@ -168,45 +166,28 @@ pub fn parse_bytecode(
             .collect();
         section_entries.sort_by_key(|e| e.address);
 
+        let gap_entry = |start: u64, end: u64| RodataEntry {
+            section_index: *section_index,
+            address: start,
+            address_out: 0,
+            size: end - start,
+            name: format!(".rodata.__anon_{:#x}_{start:#x}", section_index.0),
+            bytes: section_data[start as usize..end as usize]
+                .iter()
+                .map(|&b| Number::Int(i64::from(b)))
+                .collect(),
+        };
+
         let mut cursor = 0u64;
         for entry in &section_entries {
             if cursor < entry.address {
-                let gap_bytes: Vec<Number> = section_data
-                    [cursor as usize..entry.address as usize]
-                    .iter()
-                    .map(|&b| Number::Int(i64::from(b)))
-                    .collect();
-                synthetic_rodata.push(RodataEntry {
-                    section_index: *section_index,
-                    address: cursor,
-                    address_out: 0,
-                    size: entry.address - cursor,
-                    name: format!(
-                        ".rodata.__anon_{:#x}_{:#x}",
-                        section_index.0, cursor
-                    ),
-                    bytes: gap_bytes,
-                });
+                synthetic_rodata.push(gap_entry(cursor, entry.address));
             }
             cursor = cursor.max(entry.address + entry.size);
         }
 
         if cursor < section_size {
-            let gap_bytes: Vec<Number> = section_data[cursor as usize..]
-                .iter()
-                .map(|&b| Number::Int(i64::from(b)))
-                .collect();
-            synthetic_rodata.push(RodataEntry {
-                section_index: *section_index,
-                address: cursor,
-                address_out: 0,
-                size: section_size - cursor,
-                name: format!(
-                    ".rodata.__anon_{:#x}_{:#x}",
-                    section_index.0, cursor
-                ),
-                bytes: gap_bytes,
-            });
+            synthetic_rodata.push(gap_entry(cursor, section_size));
         }
     }
 
@@ -241,17 +222,6 @@ pub fn parse_bytecode(
         rodata_size = section_base + section.size();
         previous_entry = entries.last_mut();
     }
-
-    // Function to resolve an input section address to it's offset in the output rodata.
-    let resolve_rodata_output_offset =
-        |section: SectionIndex, input_address: u64| {
-            pending_rodata.iter().find_map(|entry| {
-                (entry.section_index == section
-                    && (entry.address..entry.address + entry.size)
-                        .contains(&input_address))
-                .then(|| entry.address_out + (input_address - entry.address))
-            })
-        };
 
     // Map each rodata relocation to its output offset and target label.
     let mut rodata_target_labels: HashMap<u64, String> = HashMap::new();
@@ -292,10 +262,14 @@ pub fn parse_bytecode(
                 } else {
                     rel.addend()
                 };
-                let relocation_offset = resolve_rodata_output_offset(
+                let relocation_offset = find_rodata_entry(
+                    &pending_rodata,
                     *section_index,
                     relocation_address,
                 )
+                .map(|entry| {
+                    entry.address_out + (relocation_address - entry.address)
+                })
                 .ok_or_else(|| {
                     relocation_error("relocation location is not rodata")
                 })?;
@@ -337,8 +311,7 @@ pub fn parse_bytecode(
     ast.set_rodata_size(rodata_size);
 
     for section in obj.sections() {
-        if let Some(section_base) = text_section_bases.get(&section.index()) {
-            let section_base = *section_base;
+        if let Some(&section_base) = text_section_bases.get(&section.index()) {
             let section_data = section.data().unwrap();
             // parse text section and build instruction nodes
             // lddw takes 16 bytes, other instructions take 8 bytes
@@ -367,50 +340,42 @@ pub fn parse_bytecode(
             }
 
             // handle relocations
-            let section_name =
-                section.name().unwrap_or("<invalid>").to_owned();
-            for rel in section.relocations() {
+            let section_name = section.name().unwrap_or("<invalid>");
+            for (rel_offset, rel) in section.relocations() {
                 let result: Result<(), SbpfLinkerError> = (|| {
-                    let rel_target = rel.1.target();
-                    let rel_addend = rel.1.addend();
-                    let rel_has_implicit_addend = rel.1.has_implicit_addend();
-
                     // handle relocations for call targets and rodata referenced by lddw
-                    let symbol = match rel_target {
-                        Symbol(sym) => obj.symbol_by_index(sym)?,
-                        _ => return Ok(()),
+                    let Symbol(sym) = rel.target() else {
+                        return Ok(());
                     };
+                    let symbol = obj.symbol_by_index(sym)?;
 
-                    let Some(node) =
-                        ast.get_instruction_at_offset(section_base + rel.0)
+                    let Some(node) = ast
+                        .get_instruction_at_offset(section_base + rel_offset)
                     else {
                         return Err(SbpfLinkerError::InstructionParseError(
                             format!(
-                                "relocation at offset {:#x} in section {section_name} does not point at an instruction",
-                                rel.0
+                                "relocation at offset {rel_offset:#x} in section {section_name} does not point at an instruction"
                             ),
                         ));
+                    };
+
+                    // An implicit addend is stored in the instruction immediate.
+                    let addend = match node.imm {
+                        Some(Either::Right(
+                            Number::Int(val) | Number::Addr(val),
+                        )) if rel.has_implicit_addend() => val,
+                        _ => rel.addend(),
                     };
 
                     if node.opcode == Opcode::Lddw {
                         let relocation_error = |detail: &str| {
                             SbpfLinkerError::LddwRelocationError {
-                                section: section_name.clone(),
-                                address: rel.0,
+                                section: section_name.to_owned(),
+                                address: rel_offset,
                                 detail: detail.to_owned(),
                             }
                         };
 
-                        let addend = if rel_has_implicit_addend {
-                            match node.imm {
-                                Some(Either::Right(
-                                    Number::Int(val) | Number::Addr(val),
-                                )) => val,
-                                _ => rel_addend,
-                            }
-                        } else {
-                            rel_addend
-                        };
                         let target_section =
                             symbol.section_index().ok_or_else(|| {
                                 relocation_error(
@@ -450,26 +415,13 @@ pub fn parse_bytecode(
                         node.imm = Some(Either::Left(target_name));
                     } else if node.opcode == Opcode::Call {
                         if symbol.kind() == object::SymbolKind::Section {
-                            let addend_i64 = if rel_has_implicit_addend {
-                                // If relocation uses implicit addend, use `node.imm`
-                                match &node.imm {
-                                    Some(Either::Right(
-                                        Number::Int(val) | Number::Addr(val),
-                                    )) => *val,
-                                    _ => rel_addend,
-                                }
-                            } else {
-                                // Otherwise use explicit relocation addend
-                                rel_addend
-                            };
-
                             let target_section_base =
                                 symbol.section_index().and_then(|idx| {
                                     text_section_bases.get(&idx).copied()
                                 });
 
                             let resolved_target_offset = target_section_base
-                                .zip(addend_i64.checked_add(1))
+                                .zip(addend.checked_add(1))
                                 .and_then(|(section_base, slots)| {
                                     let slots = u64::try_from(slots).ok()?;
                                     let local = slots
@@ -479,40 +431,26 @@ pub fn parse_bytecode(
                                 })
                                 .filter(|target| *target < text_size);
 
-                            let target_name = if let Some(target_offset) =
-                                resolved_target_offset
-                            {
-                                if let Some(existing_name) =
-                                    labels_by_offset.get(&target_offset)
-                                {
-                                    // Use known label
-                                    existing_name.clone()
-                                } else {
-                                    // If label is not known, create and use a synthetic label
-                                    let synthetic_name =
-                                    synthetic_labels_by_offset
-                                        .entry(target_offset)
-                                        .or_insert_with(|| {
-                                            format!(
-                                                ".__sbpf_section_call_{target_offset:x}"
-                                            )
-                                        })
-                                        .clone();
-                                    labels_by_offset.insert(
-                                        target_offset,
-                                        synthetic_name.clone(),
-                                    );
-                                    synthetic_name
-                                }
-                            } else {
+                            let Some(target_offset) = resolved_target_offset
+                            else {
                                 return Err(
-                                SbpfLinkerError::UnresolvedSectionCallRelocation {
-                                    section: section_name.clone(),
-                                    abs_off: section_base + rel.0,
-                                    addend: addend_i64,
+                                    SbpfLinkerError::UnresolvedSectionCallRelocation {
+                                        section: section_name.to_owned(),
+                                        abs_off: section_base + rel_offset,
+                                        addend,
+                                    },
+                                );
+                            };
+                            let target_name = text_label_at(
+                                target_offset,
+                                &mut labels_by_offset,
+                                &mut synthetic_labels_by_offset,
+                                || {
+                                    format!(
+                                        ".__sbpf_section_call_{target_offset:x}"
+                                    )
                                 },
                             );
-                            };
 
                             node.imm = Some(Either::Left(target_name));
                         } else {
@@ -568,17 +506,15 @@ pub fn parse_bytecode(
         });
     }
 
-    if !synthetic_labels_by_offset.is_empty() {
-        // Add synthetic labels to AST
-        let mut synthetic_labels =
-            synthetic_labels_by_offset.into_iter().collect::<Vec<_>>();
-        synthetic_labels.sort_by_key(|(offset, _)| *offset);
-        for (offset, name) in synthetic_labels {
-            ast.nodes.push(ASTNode::Label {
-                label: Label { name, span: 0..1 },
-                offset,
-            });
-        }
+    // Add synthetic labels to AST
+    let mut synthetic_labels =
+        synthetic_labels_by_offset.into_iter().collect::<Vec<_>>();
+    synthetic_labels.sort_by_key(|(offset, _)| *offset);
+    for (offset, name) in synthetic_labels {
+        ast.nodes.push(ASTNode::Label {
+            label: Label { name, span: 0..1 },
+            offset,
+        });
     }
 
     ast.set_text_size(text_size);
@@ -657,6 +593,17 @@ pub fn parse_bytecode(
     }
 }
 
+fn find_rodata_entry(
+    entries: &[RodataEntry],
+    section: SectionIndex,
+    address: u64,
+) -> Option<&RodataEntry> {
+    entries.iter().find(|entry| {
+        entry.section_index == section
+            && (entry.address..entry.address + entry.size).contains(&address)
+    })
+}
+
 fn resolve_rodata_label(
     section: SectionIndex,
     address: u64,
@@ -664,10 +611,7 @@ fn resolve_rodata_label(
     labels: &mut HashMap<u64, String>,
     nodes: &mut Vec<ASTNode>,
 ) -> Option<String> {
-    let entry = entries.iter().find(|entry| {
-        entry.section_index == section
-            && (entry.address..entry.address + entry.size).contains(&address)
-    })?;
+    let entry = find_rodata_entry(entries, section, address)?;
     let offset = entry.address_out + address - entry.address;
     if offset == entry.address_out {
         return Some(entry.name.clone());
@@ -704,14 +648,24 @@ fn resolve_text_label(
         .get(&section)?
         .checked_add(address)
         .filter(|offset| *offset < text_size)?;
+    Some(text_label_at(offset, labels, synthetic_labels, || {
+        format!(".text.__at__{offset:#x}")
+    }))
+}
+
+/// Returns the label at text `offset`, synthesizing one if none exists.
+fn text_label_at(
+    offset: u64,
+    labels: &mut HashMap<u64, String>,
+    synthetic_labels: &mut HashMap<u64, String>,
+    synthetic_name: impl FnOnce() -> String,
+) -> String {
     if let Some(name) = labels.get(&offset) {
-        return Some(name.clone());
+        return name.clone();
     }
 
-    let name = synthetic_labels
-        .entry(offset)
-        .or_insert_with(|| format!(".text.__at__{offset:#x}"))
-        .clone();
+    let name =
+        synthetic_labels.entry(offset).or_insert_with(synthetic_name).clone();
     labels.insert(offset, name.clone());
-    Some(name)
+    name
 }
