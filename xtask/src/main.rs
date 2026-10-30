@@ -12,36 +12,26 @@ const LLVM_BRANCH: &str = "main";
 const LLVM_CACHE_KEY: &str = "llvm-main";
 const GIT_DEPTH: &str = "1";
 
-enum CommandName {
-    Install,
-    UpdateLlvm,
-}
-
 fn main() -> Result<()> {
-    let command = match std::env::args().nth(1).as_deref() {
-        None | Some("install") => CommandName::Install,
-        Some("update-llvm") => CommandName::UpdateLlvm,
+    match std::env::args().nth(1).as_deref() {
+        None | Some("install") => install(),
+        Some("update-llvm") => update_llvm(),
         Some(argument) => anyhow::bail!(
             "unexpected argument `{argument}`; expected one of: install, update-llvm"
         ),
-    };
-
-    match command {
-        CommandName::Install => install(),
-        CommandName::UpdateLlvm => update_llvm(),
     }
 }
 
-fn project_root() -> Result<PathBuf> {
+fn project_root() -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::current_dir().unwrap());
 
     // If we're in xtask dir, go up one level
     if manifest_dir.ends_with("xtask") {
-        Ok(manifest_dir.parent().unwrap().to_path_buf())
+        manifest_dir.parent().unwrap().to_path_buf()
     } else {
-        Ok(manifest_dir)
+        manifest_dir
     }
 }
 
@@ -99,13 +89,16 @@ fn update_llvm_checkout(llvm_src_dir: &Path) -> Result<bool> {
         return Ok(true);
     }
 
-    let previous_head = command_stdout(
-        Command::new("git")
-            .args(["-C"])
-            .arg(llvm_src_dir)
-            .args(["rev-parse", "HEAD"]),
-        "read llvm-project HEAD",
-    )?;
+    let head = |description| {
+        command_stdout(
+            Command::new("git")
+                .args(["-C"])
+                .arg(llvm_src_dir)
+                .args(["rev-parse", "HEAD"]),
+            description,
+        )
+    };
+    let previous_head = head("read llvm-project HEAD")?;
 
     println!(
         "Updating {} from {} {}",
@@ -123,13 +116,7 @@ fn update_llvm_checkout(llvm_src_dir: &Path) -> Result<bool> {
         "update llvm-project",
     )?;
 
-    let current_head = command_stdout(
-        Command::new("git")
-            .args(["-C"])
-            .arg(llvm_src_dir)
-            .args(["rev-parse", "HEAD"]),
-        "read updated llvm-project HEAD",
-    )?;
+    let current_head = head("read updated llvm-project HEAD")?;
 
     Ok(previous_head != current_head)
 }
@@ -226,11 +213,11 @@ fn build_llvm_if_needed(
             .env("CMAKE_INSTALL_MODE", "ABS_SYMLINK");
         println!("Building LLVM with command {cmake_build:?}");
         let status = cmake_build.status().with_context(|| {
-            format!("failed to build LLVM with command {cmake_configure:?}")
+            format!("failed to build LLVM with command {cmake_build:?}")
         })?;
         if !status.success() {
             anyhow::bail!(
-                "failed to build LLVM with command {cmake_configure:?}: {status}"
+                "failed to build LLVM with command {cmake_build:?}: {status}"
             );
         }
 
@@ -285,66 +272,42 @@ fn update_llvm() -> Result<()> {
 }
 
 fn build_linker(llvm_install_dir: &Path) -> Result<()> {
-    let project_root = project_root()?;
+    let project_root = project_root();
 
     let mut cmd = Command::new("cargo");
 
     if cfg!(target_os = "macos") {
-        // Ensure brew prefixes
-        let llvm_output = Command::new("brew")
-            .args(["--prefix", "llvm"])
-            .output()
-            .with_context(|| "failed to run brew --prefix llvm")?;
-        if !llvm_output.status.success() {
-            anyhow::bail!(
-                "brew --prefix llvm failed: {}",
-                String::from_utf8_lossy(&llvm_output.stderr).trim()
-            );
-        }
-        let llvm_prefix =
-            String::from_utf8_lossy(&llvm_output.stdout).trim().to_string();
-
-        let zlib_output = Command::new("brew")
-            .args(["--prefix", "zlib"])
-            .output()
-            .with_context(|| "failed to run brew --prefix zlib")?;
-        if !zlib_output.status.success() {
-            anyhow::bail!(
-                "brew --prefix zlib failed: {}",
-                String::from_utf8_lossy(&zlib_output.stderr).trim()
-            );
-        }
-        let zlib_prefix =
-            String::from_utf8_lossy(&zlib_output.stdout).trim().to_string();
-
-        let zstd_output = Command::new("brew")
-            .args(["--prefix", "zstd"])
-            .output()
-            .with_context(|| "failed to run brew --prefix zstd")?;
-        if !zstd_output.status.success() {
-            anyhow::bail!(
-                "brew --prefix zstd failed: {}",
-                String::from_utf8_lossy(&zstd_output.stderr).trim()
-            );
-        }
-        let zstd_prefix =
-            String::from_utf8_lossy(&zstd_output.stdout).trim().to_string();
+        let brew_prefix = |formula| -> Result<String> {
+            let output = Command::new("brew")
+                .args(["--prefix", formula])
+                .output()
+                .with_context(|| {
+                    format!("failed to run brew --prefix {formula}")
+                })?;
+            if !output.status.success() {
+                anyhow::bail!(
+                    "brew --prefix {formula} failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+            }
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        };
+        let llvm_prefix = brew_prefix("llvm")?;
+        let zlib_prefix = brew_prefix("zlib")?;
+        let zstd_prefix = brew_prefix("zstd")?;
 
         if llvm_prefix.is_empty()
             || zlib_prefix.is_empty()
             || zstd_prefix.is_empty()
         {
             anyhow::bail!(
-                "failed to resolve brew prefixes (llvm='{}', zlib='{}', zstd='{}')",
-                llvm_prefix,
-                zlib_prefix,
-                zstd_prefix
+                "failed to resolve brew prefixes (llvm='{llvm_prefix}', zlib='{zlib_prefix}', zstd='{zstd_prefix}')"
             );
         }
 
-        cmd.env("CXXSTDLIB_PATH", format!("{}/lib/c++", llvm_prefix));
-        cmd.env("ZLIB_PATH", format!("{}/lib", zlib_prefix));
-        cmd.env("LIBZSTD_PATH", format!("{}/lib", zstd_prefix));
+        cmd.env("CXXSTDLIB_PATH", format!("{llvm_prefix}/lib/c++"));
+        cmd.env("ZLIB_PATH", format!("{zlib_prefix}/lib"));
+        cmd.env("LIBZSTD_PATH", format!("{zstd_prefix}/lib"));
     }
 
     cmd.args([
@@ -359,8 +322,7 @@ fn build_linker(llvm_install_dir: &Path) -> Result<()> {
     .env("LLVM_PREFIX", llvm_install_dir)
     .current_dir(&project_root);
 
-    run_command(&mut cmd, "build sbpf-linker (static)")?;
-    Ok(())
+    run_command(&mut cmd, "build sbpf-linker (static)")
 }
 
 fn command_stdout(cmd: &mut Command, description: &str) -> Result<String> {
@@ -381,10 +343,10 @@ fn command_stdout(cmd: &mut Command, description: &str) -> Result<String> {
 fn run_command(cmd: &mut Command, description: &str) -> Result<()> {
     let status = cmd
         .status()
-        .with_context(|| format!("failed to run: {}", description))?;
+        .with_context(|| format!("failed to run: {description}"))?;
 
     if !status.success() {
-        anyhow::bail!("command failed: {}", description);
+        anyhow::bail!("command failed: {description}");
     }
 
     Ok(())

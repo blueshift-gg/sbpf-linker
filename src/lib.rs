@@ -85,7 +85,7 @@ impl SbpfLinkerError {
     }
 
     pub fn format_errors(errors: &[Self]) -> String {
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n")
+        errors.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n")
     }
 }
 
