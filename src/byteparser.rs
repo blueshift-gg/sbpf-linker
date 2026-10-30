@@ -11,7 +11,8 @@ use sbpf_common::{
 use either::Either;
 use object::RelocationTarget::Symbol;
 use object::{
-    File, Object as _, ObjectSection as _, ObjectSymbol as _, SectionIndex,
+    File, Object as _, ObjectSection as _, ObjectSymbol as _, RelocationFlags,
+    SectionIndex,
 };
 
 use std::collections::HashMap;
@@ -22,6 +23,19 @@ use crate::fuse_args_stack::{
 
 const BPF_TRAP: &str = "__bpf_trap";
 const ABORT_SYSCALL: &str = "abort";
+
+// Relocation types that `object` does not name.
+const R_BPF_64_ABS32: u32 = 3;
+const R_BPF_64_NODYLD32: u32 = 4;
+
+fn is_32_bit_relocation(relocation: &object::Relocation) -> bool {
+    let RelocationFlags::Elf { r_type } = relocation.flags() else {
+        return relocation.size() == 32;
+    };
+    relocation.size() == 32
+        || r_type == object::elf::R_BPF_64_32
+        || matches!(r_type.0, R_BPF_64_ABS32 | R_BPF_64_NODYLD32)
+}
 
 fn decode_instruction_for_arch(
     data: &[u8],
@@ -273,6 +287,17 @@ pub fn parse_bytecode(
                     return Err(relocation_error("invalid relocation target"));
                 };
                 let symbol = obj.symbol_by_index(symbol_index)?;
+                // A 32-bit entry cannot hold an address. LLVM emits them for
+                // relative lookup tables, where the value is an offset from
+                // the table; BPF has no PC-relative data relocation, so the
+                // object does not say which table. Reject it rather than
+                // read the neighbouring entry as part of a 64-bit addend.
+                if is_32_bit_relocation(&rel) {
+                    return Err(relocation_error(
+                        "32-bit relocations are not supported in read-only \
+                         data; compile with `-C relocation-model=static`",
+                    ));
+                }
                 let target_section =
                     symbol.section_index().ok_or_else(|| {
                         relocation_error("relocation target has no section")
