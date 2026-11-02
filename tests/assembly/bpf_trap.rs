@@ -16,7 +16,7 @@ extern crate loop_panic_handler;
 pub fn entrypoint(input: *const u64) -> u64 {
     let value = unsafe { core::ptr::read_volatile(input) };
     if value == 0 {
-        core::process::abort_immediate();
+        core::process::crash();
     }
     value
 }
