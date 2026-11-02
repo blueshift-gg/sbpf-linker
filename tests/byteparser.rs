@@ -140,6 +140,42 @@ fn rodata_relocation_handles_interior_text_target() {
     }));
 }
 
+#[test]
+fn rodata_relocation_rejects_32_bit_entries() {
+    // The relocation types LLVM's BPF backend can emit for a 4-byte value.
+    const R_BPF_64_ABS32: u32 = 3;
+    const R_BPF_64_NODYLD32: u32 = 4;
+
+    for r_type in [
+        object::elf::RelocationType(R_BPF_64_ABS32),
+        object::elf::RelocationType(R_BPF_64_NODYLD32),
+        object::elf::R_BPF_64_32,
+    ] {
+        let (mut object, rodata) = create_object_with_rodata(16);
+        let rodata_section = object.section_symbol(rodata);
+        // The last entry of a four-entry table: reading it as a 64-bit
+        // addend would run past the end of the section.
+        object
+            .add_relocation(
+                rodata,
+                Relocation {
+                    offset: 12,
+                    symbol: rodata_section,
+                    addend: 0,
+                    flags: RelocationFlags::Elf { r_type },
+                },
+            )
+            .expect("failed to add rodata relocation");
+
+        assert_rodata_relocation_error(
+            object,
+            12,
+            "32-bit relocations are not supported in read-only data; \
+             compile with `-C relocation-model=static`",
+        );
+    }
+}
+
 fn create_object_with_rodata(size: usize) -> (Object<'static>, SectionId) {
     let mut object =
         Object::new(BinaryFormat::Elf, Architecture::Sbf, Endianness::Little);
