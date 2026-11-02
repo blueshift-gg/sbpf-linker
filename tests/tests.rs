@@ -79,6 +79,19 @@ fn rustc_cmd() -> Command {
     )
 }
 
+/// Returns rustc's library directory, which holds the LLVM that the
+/// `rust-llvm` proxy loads.
+fn rustc_lib_dir() -> PathBuf {
+    let output = rustc_cmd()
+        .args(["--print", "sysroot"])
+        .output()
+        .expect("failed to run rustc --print sysroot");
+    assert!(output.status.success(), "rustc --print sysroot failed");
+    let sysroot = String::from_utf8(output.stdout)
+        .expect("rustc sysroot is not valid UTF-8");
+    PathBuf::from(sysroot.trim()).join("lib")
+}
+
 fn find_binary(binary_re_str: &str) -> PathBuf {
     let binary_re = regex::Regex::new(binary_re_str).unwrap();
     let mut binary = which::which_re(binary_re).expect(binary_re_str);
@@ -112,6 +125,9 @@ where
         llvm_filecheck,
         mode,
         src_base: PathBuf::from(format!("tests/{mode}")),
+        // Compiletest prepends this to `LD_LIBRARY_PATH`. The default empty
+        // entry makes the `rust-llvm` proxy print a warning on every link.
+        compile_lib_path: rustc_lib_dir(),
         ..Default::default()
     };
     config.link_deps();
@@ -263,6 +279,14 @@ fn compile_test() {
     run_mode::<SbpfV3, _>(
         target,
         "compile-fail",
+        &bpf_sysroot,
+        None::<fn(&mut compiletest_rs::Config)>,
+    );
+
+    // UI fixtures compare the linker's warnings, which don't depend on the arch.
+    run_mode::<SbpfV3, _>(
+        target,
+        "ui",
         &bpf_sysroot,
         None::<fn(&mut compiletest_rs::Config)>,
     );
