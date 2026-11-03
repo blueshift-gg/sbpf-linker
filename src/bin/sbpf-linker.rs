@@ -1,8 +1,9 @@
 use std::{
     env,
-    ffi::{CStr, CString},
+    ffi::{CStr, CString, c_void},
     fs, io,
     path::{Component, Path, PathBuf},
+    ptr,
     str::FromStr,
 };
 
@@ -128,19 +129,105 @@ fn parent_and_file_name(p: PathBuf) -> anyhow::Result<(PathBuf, PathBuf)> {
     Ok((comps.as_path().to_path_buf(), PathBuf::from(file_name)))
 }
 
-/// Warns when inputs doesn't include `solana-compiler-builtins` which might come from
+/// Symbols `solana-compiler-builtins` defines, grouped by category. The crate is
+/// treated as linked when at least one symbol from every category is defined.
+const SOLANA_BUILTINS_FINGERPRINT: [&[&CStr]; 3] = [
+    &[c"memcpy", c"memset", c"memmove"],
+    &[c"__multi3", c"__udivti3", c"__umodti3"],
+    &[c"__adddf3", c"__muldf3", c"__divdf3"],
+];
+
+/// Returns which [`SOLANA_BUILTINS_FINGERPRINT`] categories `bitcode` defines,
+/// regardless of linkage. Anything that isn't valid bitcode defines none.
+fn defined_fingerprint_categories(
+    bitcode: &[u8],
+) -> [bool; SOLANA_BUILTINS_FINGERPRINT.len()] {
+    use bpf_linker::llvm_sys::{
+        bit_reader::LLVMParseBitcodeInContext2,
+        core::{
+            LLVMContextCreate, LLVMContextDispose,
+            LLVMContextSetDiagnosticHandler,
+            LLVMCreateMemoryBufferWithMemoryRange, LLVMDisposeMemoryBuffer,
+            LLVMDisposeModule, LLVMGetNamedFunction, LLVMIsDeclaration,
+        },
+        prelude::LLVMDiagnosticInfoRef,
+    };
+
+    extern "C" fn ignore_diagnostic(_: LLVMDiagnosticInfoRef, _: *mut c_void) {
+    }
+
+    let mut defined = [false; SOLANA_BUILTINS_FINGERPRINT.len()];
+    if !matches!(bitcode.get(..4), Some(b"BC\xC0\xDE" | b"\xDE\xC0\x17\x0B")) {
+        return defined;
+    }
+    // SAFETY: the buffer borrows `bitcode`, which outlives it, and the module,
+    // buffer and context are each disposed exactly once, module first.
+    unsafe {
+        let context = LLVMContextCreate();
+        // The default handler exits the process on malformed bitcode.
+        LLVMContextSetDiagnosticHandler(
+            context,
+            Some(ignore_diagnostic),
+            ptr::null_mut(),
+        );
+        let buffer = LLVMCreateMemoryBufferWithMemoryRange(
+            bitcode.as_ptr().cast(),
+            bitcode.len(),
+            c"input".as_ptr(),
+            0,
+        );
+        let mut module = ptr::null_mut();
+        if LLVMParseBitcodeInContext2(context, buffer, &mut module) == 0 {
+            for (defined, names) in
+                defined.iter_mut().zip(SOLANA_BUILTINS_FINGERPRINT)
+            {
+                *defined = names.iter().any(|name| {
+                    let function = LLVMGetNamedFunction(module, name.as_ptr());
+                    !function.is_null() && LLVMIsDeclaration(function) == 0
+                });
+            }
+            LLVMDisposeModule(module);
+        }
+        LLVMDisposeMemoryBuffer(buffer);
+        LLVMContextDispose(context);
+    }
+    defined
+}
+
+/// Whether inputs include `solana-compiler-builtins`, which might come from
 ///
 /// 1. solana-compiler-builtins crate
 /// 2. hashed rlib rustc passes for a cargo dependency
 /// 3. unhashed copy `cargo build-sbpf` caches
+/// 4. per-crate object rustc passes with thin LTO
+/// 5. merged object rustc passes with fat LTO, recognized by the symbols it defines
+fn builtins_linked(inputs: &[PathBuf]) -> bool {
+    let file_names =
+        || inputs.iter().filter_map(|input| input.file_name()?.to_str());
+    if file_names().any(|name| name.contains("solana_compiler_builtins")) {
+        return true;
+    }
+    // Rustc passes rlibs unless cross-crate LTO merged them into objects.
+    if file_names().any(|name| name.ends_with(".rlib")) {
+        return false;
+    }
+    let mut linked = [false; SOLANA_BUILTINS_FINGERPRINT.len()];
+    for input in inputs {
+        let Ok(bitcode) = fs::read(input) else { continue };
+        for (linked, defined) in
+            linked.iter_mut().zip(defined_fingerprint_categories(&bitcode))
+        {
+            *linked |= defined;
+        }
+        if linked.iter().all(|&linked| linked) {
+            return true;
+        }
+    }
+    false
+}
+
 fn warn_if_builtins_missing(inputs: &[PathBuf]) {
-    let present = inputs.iter().any(|input| {
-        input.file_name().and_then(|name| name.to_str()).is_some_and(|name| {
-            name.starts_with("libsolana_compiler_builtins")
-                && name.ends_with(".rlib")
-        })
-    });
-    if !present {
+    if !builtins_linked(inputs) {
         eprintln!(
             "warning: `solana-compiler-builtins` was not linked. Code \
              generation may fail for operations that require libcalls, and \
