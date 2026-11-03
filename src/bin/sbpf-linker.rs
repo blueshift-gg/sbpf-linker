@@ -308,9 +308,9 @@ where
                 {
                     println!("LLVM dynamically linked at runtime");
                     println!(
-                        "Warning: not recommended; \
-                         use `cargo binstall sbpf-linker`, or \
-                         ensure you're running nightly 100+ when \
+                        "Warning: source builds are for sbpf-linker \
+                         developers only and require nightly 100+; \
+                         use `cargo binstall sbpf-linker` when \
                          building Solana programs."
                     );
                 }
