@@ -21,7 +21,10 @@ The recommended installation method is
 cargo binstall sbpf-linker
 ```
 
-### cargo install (requires toolchain that ships a shared LLVM library)
+### cargo install (sbpf-linker developers only)
+
+> [!WARNING]
+> Building from source is intended for sbpf-linker development only. It depends on the Rust toolchain's LLVM shared library at runtime, which breaks when the toolchain's LLVM version or layout changes. Use `cargo binstall` to install sbpf-linker for building Solana programs.
 
 A source install that selects the LLVM shared library at runtime (make sure the linker is invoked from rustc nightly with minimum nightly-2026-08-05)
 
