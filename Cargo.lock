@@ -1002,9 +1002,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-analyze"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e7070351a7aba898f5bc421a54ed197146142c9d6bfe24130d6858923e2e50f"
+checksum = "b1e1eb2cc00050f5284b065406af7edd6d9b67a1621fb7058cbe62a85081cbf0"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1014,9 +1014,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-assembler"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27037865b35648224b70b856115fe67b665ea3a52e7a7489a423c623ad7cbd66"
+checksum = "55605fd6221e78096230c46ea7ba2634bc93b633f47ca8a1bf8c9d896bfc3420"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1039,9 +1039,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fe43c7f1ee30f59e7f5225fd86aef08dd88686c2aab1b3cf424c8add0fb899f"
+checksum = "280354f519178aca4ceb5167fcdd8af4533108fbcc3850ead3b8afdc4dc90ca8"
 dependencies = [
  "either",
  "num-derive",
@@ -1055,9 +1055,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common-derive"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53a70e2baf1a8af0e5c511e014aa5151f6082ee47a1ba6f1a78f201b69d22eb4"
+checksum = "ce30487c95eac4a02e9736c1a69c43421f0034d08a2ff2e6a4044621acd0f625"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1067,9 +1067,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-common-tablegen"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c7035049aaf477f533cd108559d54b4e6cb6a85c7c488e663a7af34ffa740b"
+checksum = "ed9a8b4822fe9267f72b1b253d5a29ba629e2a1fefdd993cc5ee65bfd0e3b8a7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1078,9 +1078,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-ir"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3ec0d02f5c17bec68eb5cca1ba5d648c1bcb58d953ccc9fa0bf31948498355a"
+checksum = "42d7c1024c90a036c495211d1b7ce54a332da1efcbbc8eb3b8f987c30d0b65af"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "sbpf-linker"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "aya-rustc-llvm-proxy",
@@ -1112,9 +1112,9 @@ dependencies = [
 
 [[package]]
 name = "sbpf-syscall-map"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee308831c306556fb7d9b941144df613b14f1c2601fc053e18a018a02152ce15"
+checksum = "db94e738b66f7a862dee2b81ee62f50af106f6fc6459c83feb12e2be8ade8636"
 
 [[package]]
 name = "scopeguard"
