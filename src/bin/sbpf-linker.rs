@@ -253,13 +253,15 @@ struct CommandLine {
     /// Enable or disable CPU features. Rustc forwards this from `-C target-feature`.
     /// Use +feature to enable a feature, or -feature to disable it. For example
     /// --cpu-features=+allows-misaligned-mem-access,+alu32,-dwarfris
+    /// Can be repeated; the values are joined in order, so a later setting of a
+    /// feature overrides an earlier one.
     #[clap(
         long,
         value_name = "features",
-        default_value = "",
-        allow_hyphen_values = true
+        allow_hyphen_values = true,
+        action = clap::ArgAction::Append
     )]
-    cpu_features: CString,
+    cpu_features: Vec<CString>,
 
     /// Write output to <output>
     #[clap(short, long)]
@@ -376,6 +378,17 @@ where
     HierarchicalLayer::new(TRACING_IDENT)
         .with_indent_lines(true)
         .with_writer(writer)
+}
+
+/// Joins every `--cpu-features` value into the one feature string LLVM takes.
+fn join_cpu_features(features: &[CString]) -> CString {
+    let features = features
+        .iter()
+        .map(|features| features.as_bytes())
+        .filter(|features| !features.is_empty())
+        .collect::<Vec<_>>()
+        .join(&b',');
+    CString::new(features).expect("no value contains a NUL byte")
 }
 
 fn process_cli_options<I>(args: I) -> anyhow::Result<CommandLine>
@@ -527,6 +540,7 @@ fn main() -> anyhow::Result<()> {
                 .ok_or_else(|| CliError::InvalidStackFrameSize(arg.to_owned()))
         });
 
+    let cpu_features = join_cpu_features(&cpu_features);
     let mut linker = Linker::new(LinkerOptions {
         target,
         cpu,
@@ -771,5 +785,39 @@ mod tests {
         ])
         .unwrap();
         assert!(matches!(cli.arch.0, SbpfArch::V0));
+    }
+
+    #[test]
+    fn test_repeated_cpu_features_are_joined_in_order() {
+        let parse = |features: &[&str]| {
+            let args = ["sbpf-linker", "input.o", "-o", "/tmp/bin.o"]
+                .into_iter()
+                .chain(features.iter().copied())
+                .map(String::from);
+            let CommandLine { cpu_features, .. } =
+                process_cli_options(args).unwrap();
+            join_cpu_features(&cpu_features)
+        };
+
+        assert_eq!(parse(&[]), CString::default());
+        assert_eq!(
+            parse(&["--cpu-features", "+alu32"]),
+            CString::new("+alu32").unwrap()
+        );
+        // Rustc passes the value as a separate argument, `-C link-arg` usually
+        // with `=`. A later setting of a feature overrides an earlier one in
+        // LLVM, so the order is kept.
+        assert_eq!(
+            parse(&[
+                "--cpu-features=+allows-misaligned-mem-access",
+                "--cpu-features",
+                "+alu32,-allows-misaligned-mem-access",
+                "--cpu-features=",
+            ]),
+            CString::new(
+                "+allows-misaligned-mem-access,+alu32,-allows-misaligned-mem-access"
+            )
+            .unwrap()
+        );
     }
 }
