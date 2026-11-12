@@ -8,18 +8,27 @@
 
 #![no_std]
 #![no_main]
+#![allow(internal_features)]
+#![feature(core_intrinsics)]
 
 // aux-build: loop-panic-handler.rs
 extern crate loop_panic_handler;
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::intrinsics::{AtomicOrdering, atomic_load, atomic_store};
 
 #[unsafe(no_mangle)]
 pub fn entrypoint(input: *mut u8) -> u64 {
-    let a = unsafe { &*input.cast::<AtomicU64>() };
-    let b = unsafe { &*input.add(8).cast::<AtomicU64>() };
-    let received = a.load(Ordering::Acquire);
-    b.store(received.wrapping_add(1), Ordering::Release);
+    let a = input.cast::<u64>();
+    let b = unsafe { input.add(8).cast::<u64>() };
+    let received = unsafe {
+        atomic_load::<_, { AtomicOrdering::Acquire }, false>(a)
+    };
+    unsafe {
+        atomic_store::<_, { AtomicOrdering::Release }, false>(
+            b,
+            received.wrapping_add(1),
+        );
+    }
     received
 }
 
