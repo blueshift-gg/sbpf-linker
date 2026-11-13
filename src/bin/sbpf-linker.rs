@@ -25,12 +25,13 @@ use sbpf_linker::{
     link_program,
 };
 
-const MATH_BUILTINS: [&str; 14] = [
+const MATH_BUILTINS: [&str; 47] = [
     "__multi3",
     "__udivti3",
     "__umodti3",
     "__divti3",
     "__modti3",
+    // f64 arithmetic, conversions, comparisons
     "__adddf3",
     "__subdf3",
     "__negdf2",
@@ -40,6 +41,41 @@ const MATH_BUILTINS: [&str; 14] = [
     "__fixunsdfdi",
     "__gedf2",
     "__gtdf2",
+    "__floatunsidf",
+    "__floatdidf",
+    "__floatsidf",
+    "__fixunsdfsi",
+    "__fixdfdi",
+    "__fixdfsi",
+    "__ltdf2",
+    "__ledf2",
+    "__eqdf2",
+    "__nedf2",
+    "__unorddf2",
+    // f32/f64 conversions
+    "__extendsfdf2",
+    "__truncdfsf2",
+    // f32 arithmetic, conversions, comparisons
+    "__addsf3",
+    "__subsf3",
+    "__negsf2",
+    "__mulsf3",
+    "__divsf3",
+    "__floatunsisf",
+    "__floatsisf",
+    "__floatdisf",
+    "__floatundisf",
+    "__ltsf2",
+    "__lesf2",
+    "__eqsf2",
+    "__nesf2",
+    "__gtsf2",
+    "__gesf2",
+    "__unordsf2",
+    "__fixunssfdi",
+    "__fixsfdi",
+    "__fixunssfsi",
+    "__fixsfsi",
 ];
 
 #[derive(Debug, Error)]
