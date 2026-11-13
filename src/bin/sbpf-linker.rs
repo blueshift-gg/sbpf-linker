@@ -25,7 +25,7 @@ use sbpf_linker::{
     link_program,
 };
 
-const MATH_BUILTINS: [&str; 45] = [
+const MATH_BUILTINS: [&str; 47] = [
     "__multi3",
     "__udivti3",
     "__umodti3",
@@ -52,6 +52,9 @@ const MATH_BUILTINS: [&str; 45] = [
     "__eqdf2",
     "__nedf2",
     "__unorddf2",
+    // f32/f64 conversions
+    "__extendsfdf2",
+    "__truncdfsf2",
     // f32 arithmetic, conversions, comparisons
     "__addsf3",
     "__subsf3",
