@@ -3,7 +3,7 @@
 // compile-flags: --crate-type bin -C opt-level=3 -C panic=abort
 //[thin] compile-flags: -C lto=thin
 //[fat] compile-flags: -C lto=fat
-// normalize-stderr-test: "(?s)warning: linker stderr: unable to open LLVM shared lib [^\n]*: dlopen failed\n  \|.*emitted\n\n" -> ""
+// normalize-stderr-test: "(?s)warning: linker stderr: unable to open LLVM shared lib [^\n]*: dlopen failed\n *\|.*emitted\n\n" -> ""
 
 // With LTO, rustc passes no rlibs, so the linker has to recognize
 // `solana-compiler-builtins` from the thin-LTO object name or the symbols in
