@@ -785,48 +785,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phf"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
-dependencies = [
- "phf_shared",
- "serde",
-]
-
-[[package]]
-name = "phf_generator"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "135ace3a761e564ec88c03a77317a7c6b80bb7f7135ef2544dbe054243b89737"
-dependencies = [
- "fastrand",
- "phf_shared",
-]
-
-[[package]]
-name = "phf_macros"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
-dependencies = [
- "phf_generator",
- "phf_shared",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
-dependencies = [
- "siphasher",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1003,7 +961,7 @@ dependencies = [
 [[package]]
 name = "sbpf-analyze"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1014,7 +972,7 @@ dependencies = [
 [[package]]
 name = "sbpf-assembler"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 dependencies = [
  "anyhow",
  "codespan",
@@ -1023,8 +981,6 @@ dependencies = [
  "num-traits",
  "pest",
  "pest_derive",
- "phf",
- "phf_macros",
  "sbpf-analyze",
  "sbpf-common",
  "sbpf-ir",
@@ -1038,7 +994,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 dependencies = [
  "either",
  "num-derive",
@@ -1053,7 +1009,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common-derive"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1064,7 +1020,7 @@ dependencies = [
 [[package]]
 name = "sbpf-common-tablegen"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1074,7 +1030,7 @@ dependencies = [
 [[package]]
 name = "sbpf-ir"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 dependencies = [
  "either",
  "sbpf-common",
@@ -1107,7 +1063,7 @@ dependencies = [
 [[package]]
 name = "sbpf-syscall-map"
 version = "0.3.4"
-source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#5e3fb6d1ee6a6adf86693fe4b26fc325f2f0aa25"
+source = "git+https://github.com/blueshift-gg/sbpf.git?branch=master#595c61615fc55c2428eb20d96fad54aa969b156e"
 
 [[package]]
 name = "scopeguard"
@@ -1208,12 +1164,6 @@ name = "simd-adler32"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a219298ac11a56ea9a6d2120044824d6f01aeb034955e7af7bc16858527deea"
-
-[[package]]
-name = "siphasher"
-version = "1.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "slab"
