@@ -1,0 +1,36 @@
+name: Restore pinned LLVM
+description: Restore the static LLVM archive used to build sbpf-linker
+
+inputs:
+  target:
+    description: LLVM archive target triple
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install ORAS
+      uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+    - name: Restore pinned LLVM
+      shell: bash
+      env:
+        LLVM_COMMIT: aab11ee0ea5ea9a1d462ad0bc1fae9d9bb643019
+        LLVM_BUILD_REV: "4"
+        TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+
+        artifact_dir="$RUNNER_TEMP/llvm-artifact-$TARGET"
+        llvm_dir="$RUNNER_TEMP/llvm-$TARGET"
+        ref="ghcr.io/aya-rs/llvm:${LLVM_COMMIT}-${TARGET}-${LLVM_BUILD_REV}"
+
+        mkdir -p "$artifact_dir" "$llvm_dir"
+        oras pull "$ref" --output "$artifact_dir"
+        tar --zstd -xpf "$artifact_dir/llvm-archive-${TARGET}.tar.zst" -C "$llvm_dir"
+
+        echo "LLVM_PREFIX=$llvm_dir" >> "$GITHUB_ENV"
+        echo "CXXSTDLIB=libcxx,libcxxabi" >> "$GITHUB_ENV"
+        echo "CXXSTDLIB_PATH=$llvm_dir/lib" >> "$GITHUB_ENV"
+        echo "ZLIB_PATH=$llvm_dir/lib" >> "$GITHUB_ENV"
+        echo "LIBZSTD_PATH=$llvm_dir/lib" >> "$GITHUB_ENV"

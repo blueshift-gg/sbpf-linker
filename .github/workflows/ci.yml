@@ -108,7 +108,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install FileCheck
         run: sudo apt-get update && sudo apt-get install -y llvm-18-tools
-      - run: cargo test -- --nocapture
+      - name: Restore pinned LLVM
+        uses: ./.github/workflows/restore-pinned-llvm
+        with:
+          target: x86_64-unknown-linux-gnu
+      - run: >-
+          cargo test --no-default-features
+          --features bpf-linker/llvm-23,bpf-linker/llvm-link-static
+          -- --nocapture
         
   coverage:
     name: coverage (nightly)
@@ -140,6 +147,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y llvm-18-tools
 
+      - name: Restore pinned LLVM
+        uses: ./.github/workflows/restore-pinned-llvm
+        with:
+          target: x86_64-unknown-linux-gnu
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
@@ -148,7 +160,10 @@ jobs:
       # TODO: if ci duration becomes an issue, extract sysroot creation into an xtask command to avoid running
       # the compile-test suite twice.
       - name: Build BPF sysroot
-        run: cargo test --test tests compile_test -- --nocapture
+        run: >-
+          cargo test --no-default-features
+          --features bpf-linker/llvm-23,bpf-linker/llvm-link-static
+          --test tests compile_test -- --nocapture
 
       - name: Generate code coverage
         env:
@@ -160,6 +175,8 @@ jobs:
           coverage_status=0 
           cargo llvm-cov \
             --package sbpf-linker \
+            --no-default-features \
+            --features bpf-linker/llvm-23,bpf-linker/llvm-link-static \
             --all-targets \
             --color never \
             --ignore-filename-regex "$IGNORE_FILENAME_REGEX" \
