@@ -22,6 +22,7 @@ env:
 
 jobs:
   sync_master:
+    if: github.repository == 'blueshift-gg/sbpf-linker'
     name: Merge master into sbpf-linker-next
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -135,6 +136,7 @@ jobs:
         run: gh pr merge "$PR" --merge --match-head-commit "$HEAD"
 
   track_sbpf:
+    if: github.repository == 'blueshift-gg/sbpf-linker'
     name: Track the sbpf pin
     needs: sync_master
     runs-on: ubuntu-24.04
